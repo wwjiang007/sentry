@@ -95,6 +95,7 @@ public class SentryService implements Callable {
   private final boolean isHA;
   private final Activator act;
   SentryMetrics sentryMetrics;
+  private final boolean notificationLogeEnabled;
 
   public SentryService(Configuration conf) throws Exception {
     this.conf = conf;
@@ -154,14 +155,21 @@ public class SentryService implements Callable {
     conf.set(SentryConstants.CURRENT_INCARNATION_ID_KEY,
         this.act.getIncarnationId());
     webServerPort = conf.getInt(ServerConfig.SENTRY_WEB_PORT, ServerConfig.SENTRY_WEB_PORT_DEFAULT);
+
+    notificationLogeEnabled = conf.getBoolean(ServerConfig.NOTIFICATION_LOG_ENABLED,
+        ServerConfig.NOTIFICATION_LOG_ENABLED_DEFAULT);
+
     //TODO: Enable only if Hive is using Sentry?
-    try {
-      hmsFollowerExecutor = Executors.newScheduledThreadPool(1);
-      hmsFollowerExecutor.scheduleAtFixedRate(new HMSFollower(conf), 60000, 500, TimeUnit.MILLISECONDS);
-    }catch(Exception e) {
-      //TODO: Handle
-      LOGGER.error("Could not start HMSFollower");
+    if (notificationLogeEnabled) {
+      try {
+        hmsFollowerExecutor = Executors.newScheduledThreadPool(1);
+        hmsFollowerExecutor.scheduleAtFixedRate(new HMSFollower(conf), 60000, 500, TimeUnit.MILLISECONDS);
+      }catch(Exception e) {
+        //TODO: Handle
+        LOGGER.error("Could not start HMSFollower");
+      }
     }
+        
     status = Status.NOT_STARTED;
   }
 
