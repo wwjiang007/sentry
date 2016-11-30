@@ -32,6 +32,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.sentry.core.common.exception.SentryUserException;
 import org.apache.sentry.core.common.exception.SentrySiteConfigurationException;
 import org.apache.sentry.core.model.db.AccessConstants;
+import org.apache.sentry.hdfs.Updateable;
 import org.apache.sentry.provider.common.GroupMappingService;
 import org.apache.sentry.core.common.utils.PolicyFileConstants;
 import org.apache.sentry.core.common.exception.SentryGroupNotFoundException;
@@ -258,8 +259,16 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       if (request.isSetPrivilege()) {
         request.setPrivileges(Sets.newHashSet(request.getPrivilege()));
       }
+
+      // TODO: now only has SentryPlugin. Once add more SentryPolicyStorePlugins,
+      // TODO: need to differentiate the updates for different Plugins.
+      Map<TSentryPrivilege, Updateable.Update> privilegesUpdateMap = null;
+      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
+        plugin.onAlterSentryRoleGrantPrivilege(request, privilegesUpdateMap);
+      }
+
       CommitContext commitContext = sentryStore.alterSentryRoleGrantPrivileges(request.getRequestorUserName(),
-          request.getRoleName(), request.getPrivileges());
+          request.getRoleName(), request.getPrivileges(), privilegesUpdateMap);
       response.setStatus(Status.OK());
       response.setPrivileges(request.getPrivileges());
       // Maintain compatibility for old API: Set privilege field to response
@@ -268,9 +277,7 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       }
       notificationHandlerInvoker.alter_sentry_role_grant_privilege(commitContext,
           request, response);
-      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
-        plugin.onAlterSentryRoleGrantPrivilege(request);
-      }
+
     } catch (SentryNoSuchObjectException e) {
       String msg = "Role: " + request.getRoleName() + " doesn't exist";
       LOGGER.error(msg, e);

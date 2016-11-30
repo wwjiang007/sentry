@@ -24,7 +24,9 @@ import java.util.LinkedList;
 import java.util.List;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
 import org.apache.sentry.hdfs.service.thrift.TPathChanges;
+import com.google.common.base.Splitter;
 import org.apache.sentry.hdfs.service.thrift.TPathsUpdate;
 import org.apache.commons.httpclient.util.URIUtil;
 import org.apache.commons.httpclient.URIException;
@@ -33,6 +35,10 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.conf.Configuration;
 
 import com.google.common.collect.Lists;
+import org.apache.thrift.TDeserializer;
+import org.apache.thrift.TException;
+import org.apache.thrift.TSerializer;
+import org.apache.thrift.protocol.TSimpleJSONProtocol;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -152,6 +158,14 @@ public class PathsUpdate implements Updateable.Update {
     }
   }
 
+  public static String getPath(List<String> path) {
+      return Joiner.on("/").join(path);
+  }
+
+  public static List<String> splitPath(String path) {
+    return Lists.newArrayList(Splitter.on("/").split(path));
+  }
+
   @Override
   public byte[] serialize() throws IOException {
     return ThriftSerializer.serialize(tPathsUpdate);
@@ -160,6 +174,18 @@ public class PathsUpdate implements Updateable.Update {
   @Override
   public void deserialize(byte[] data) throws IOException {
     ThriftSerializer.deserialize(tPathsUpdate, data);
+  }
+
+  @Override
+  public void deserializeFromJSON(String update) throws TException {
+    TDeserializer deserializer = new TDeserializer(new TSimpleJSONProtocol.Factory());
+    deserializer.fromString(tPathsUpdate, update);
+  }
+
+  @Override
+  public String serializeToJSON() throws TException {
+    TSerializer serializer = new TSerializer(new TSimpleJSONProtocol.Factory());
+    return serializer.toString(tPathsUpdate);
   }
 
 }

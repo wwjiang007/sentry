@@ -20,6 +20,7 @@ package org.apache.sentry.provider.db;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.sentry.core.common.exception.SentryUserException;
+import org.apache.sentry.hdfs.Updateable;
 import org.apache.sentry.provider.db.service.persistent.SentryStore;
 import org.apache.sentry.provider.db.service.thrift.TAlterSentryRoleAddGroupsRequest;
 import org.apache.sentry.provider.db.service.thrift.TAlterSentryRoleDeleteGroupsRequest;
@@ -28,6 +29,9 @@ import org.apache.sentry.provider.db.service.thrift.TAlterSentryRoleRevokePrivil
 import org.apache.sentry.provider.db.service.thrift.TDropPrivilegesRequest;
 import org.apache.sentry.provider.db.service.thrift.TDropSentryRoleRequest;
 import org.apache.sentry.provider.db.service.thrift.TRenamePrivilegesRequest;
+import org.apache.sentry.provider.db.service.thrift.TSentryPrivilege;
+
+import java.util.Map;
 
 public interface SentryPolicyStorePlugin {
 
@@ -43,18 +47,18 @@ public interface SentryPolicyStorePlugin {
 
   void initialize(Configuration conf, SentryStore sentryStore) throws SentryPluginException;
 
-  void onAlterSentryRoleAddGroups(TAlterSentryRoleAddGroupsRequest tRequest) throws SentryPluginException;
+  Updateable.Update onAlterSentryRoleAddGroups(TAlterSentryRoleAddGroupsRequest tRequest) throws SentryPluginException;
 
-  void onAlterSentryRoleDeleteGroups(TAlterSentryRoleDeleteGroupsRequest tRequest) throws SentryPluginException;
+  Updateable.Update onAlterSentryRoleDeleteGroups(TAlterSentryRoleDeleteGroupsRequest tRequest) throws SentryPluginException;
 
-  void onAlterSentryRoleGrantPrivilege(TAlterSentryRoleGrantPrivilegeRequest tRequest) throws SentryPluginException;
+  void onAlterSentryRoleGrantPrivilege(TAlterSentryRoleGrantPrivilegeRequest tRequest,
+        Map<TSentryPrivilege, Updateable.Update> privilegesUpdateMap) throws SentryPluginException;
 
-  void onAlterSentryRoleRevokePrivilege(TAlterSentryRoleRevokePrivilegeRequest tRequest) throws SentryPluginException;
+  Updateable.Update onAlterSentryRoleRevokePrivilege(TAlterSentryRoleRevokePrivilegeRequest tRequest) throws SentryPluginException;
 
-  void onDropSentryRole(TDropSentryRoleRequest tRequest) throws SentryPluginException;
+  Updateable.Update onDropSentryRole(TDropSentryRoleRequest tRequest) throws SentryPluginException;
 
-  void onRenameSentryPrivilege(TRenamePrivilegesRequest request) throws SentryPluginException;
+  Updateable.Update onRenameSentryPrivilege(TRenamePrivilegesRequest request) throws SentryPluginException;
 
-  void onDropSentryPrivilege(TDropPrivilegesRequest request) throws SentryPluginException;
-
+  Updateable.Update onDropSentryPrivilege(TDropPrivilegesRequest request) throws SentryPluginException;
 }

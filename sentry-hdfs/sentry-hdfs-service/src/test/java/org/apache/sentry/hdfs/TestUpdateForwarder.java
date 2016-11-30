@@ -23,10 +23,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.locks.ReadWriteLock;
 
+import org.apache.thrift.TException;
 import org.junit.Assert;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.sentry.hdfs.UpdateForwarder.ExternalImageRetriever;
 import org.apache.sentry.hdfs.Updateable.Update;
 import org.apache.sentry.service.thrift.ServiceConstants.ServerConfig;
 import org.junit.After;
@@ -76,6 +76,16 @@ public class TestUpdateForwarder {
     @Override
     public void deserialize(byte[] data) throws IOException {
       state = new String(data);
+    }
+
+    @Override
+    public String serializeToJSON() throws TException {
+      return state;
+    }
+
+    @Override
+    public void deserializeFromJSON(String update) throws TException {
+      state = new String(update);
     }
   }
 
@@ -153,7 +163,7 @@ public class TestUpdateForwarder {
     DummyImageRetreiver imageRetreiver = new DummyImageRetreiver();
     imageRetreiver.setState("a,b,c");
     updateForwarder = UpdateForwarder.create(
-        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 10);
+        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 10, true);
     Assert.assertEquals(-2, updateForwarder.getLastUpdatedSeqNum());
     List<DummyUpdate> allUpdates = updateForwarder.getAllUpdatesFrom(0);
     Assert.assertTrue(allUpdates.size() == 1);
@@ -173,7 +183,7 @@ public class TestUpdateForwarder {
     DummyImageRetreiver imageRetreiver = new DummyImageRetreiver();
     imageRetreiver.setState("a,b,c");
     updateForwarder = UpdateForwarder.create(
-        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 5);
+        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 5, true);
     updateForwarder.handleUpdateNotification(new DummyUpdate(5, false).setState("d"));
     while(!updateForwarder.areAllUpdatesCommited()) {
       Thread.sleep(100);
@@ -194,7 +204,7 @@ public class TestUpdateForwarder {
     Assume.assumeTrue(!testConf.getBoolean(ServerConfig.SENTRY_HA_ENABLED,
         false));
     updateForwarder = UpdateForwarder.create(
-        testConf, new DummyUpdatable(), new DummyUpdate(), null, 5);
+        testConf, new DummyUpdatable(), new DummyUpdate(), null, 5, false);
     updateForwarder.handleUpdateNotification(new DummyUpdate(-1, true).setState("a"));
     while(!updateForwarder.areAllUpdatesCommited()) {
       Thread.sleep(100);
@@ -221,7 +231,7 @@ public class TestUpdateForwarder {
     DummyImageRetreiver imageRetreiver = new DummyImageRetreiver();
     imageRetreiver.setState("a,b,c");
     updateForwarder = UpdateForwarder.create(
-        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 5);
+        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 5, true);
     updateForwarder.handleUpdateNotification(new DummyUpdate(5, false).setState("d"));
     while(!updateForwarder.areAllUpdatesCommited()) {
       Thread.sleep(100);
@@ -271,7 +281,7 @@ public class TestUpdateForwarder {
     DummyImageRetreiver imageRetreiver = new DummyImageRetreiver();
     imageRetreiver.setState("a,b,c");
     updateForwarder = UpdateForwarder.create(
-        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 5);
+        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 5, true);
     updateForwarder.handleUpdateNotification(new DummyUpdate(5, false).setState("d"));
     while(!updateForwarder.areAllUpdatesCommited()) {
       Thread.sleep(100);
@@ -317,7 +327,7 @@ public class TestUpdateForwarder {
     DummyImageRetreiver imageRetreiver = new DummyImageRetreiver();
     imageRetreiver.setState("a,b,c");
     updateForwarder = UpdateForwarder.create(
-        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 5);
+        testConf, new DummyUpdatable(), new DummyUpdate(), imageRetreiver, 5, true);
     updateForwarder.handleUpdateNotification(new DummyUpdate(5, false).setState("d"));
     while(!updateForwarder.areAllUpdatesCommited()) {
       Thread.sleep(100);

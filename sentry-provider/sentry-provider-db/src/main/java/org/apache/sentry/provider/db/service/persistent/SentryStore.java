@@ -56,12 +56,9 @@ import org.apache.sentry.core.common.exception.SentryAlreadyExistsException;
 import org.apache.sentry.core.common.exception.SentryGrantDeniedException;
 import org.apache.sentry.core.common.exception.SentryInvalidInputException;
 import org.apache.sentry.core.common.exception.SentryNoSuchObjectException;
-import org.apache.sentry.provider.db.service.model.MAuthzPathsMapping;
-import org.apache.sentry.provider.db.service.model.MSentryGroup;
-import org.apache.sentry.provider.db.service.model.MSentryPrivilege;
-import org.apache.sentry.provider.db.service.model.MSentryRole;
-import org.apache.sentry.provider.db.service.model.MSentryUser;
-import org.apache.sentry.provider.db.service.model.MSentryVersion;
+import org.apache.sentry.hdfs.PermissionsUpdate;
+import org.apache.sentry.hdfs.Updateable;
+import org.apache.sentry.provider.db.service.model.*;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyStoreProcessor;
 import org.apache.sentry.provider.db.service.thrift.TSentryActiveRoleSet;
 import org.apache.sentry.provider.db.service.thrift.TSentryAuthorizable;
@@ -102,6 +99,9 @@ public class SentryStore {
   public static final String NULL_COL = "__NULL__";
   public static int INDEX_GROUP_ROLES_MAP = 0;
   public static int INDEX_USER_ROLES_MAP = 1;
+
+  // Initial change ID for permission/path change.
+  private static long INIT_CHANGE_ID = -1;
 
   private static final Set<String> ALL_ACTIONS = Sets.newHashSet(AccessConstants.ALL,
       AccessConstants.SELECT, AccessConstants.INSERT, AccessConstants.ALTER,
@@ -384,26 +384,49 @@ public class SentryStore {
   public CommitContext alterSentryRoleGrantPrivilege(String grantorPrincipal,
       String roleName, TSentryPrivilege privilege)
       throws Exception {
+    Map<TSentryPrivilege, Updateable.Update> privilegesUpdateMap = Maps.newHashMap();
+    privilegesUpdateMap.put(privilege, null);
     return alterSentryRoleGrantPrivileges(grantorPrincipal,
-        roleName, Sets.newHashSet(privilege));
+        roleName, Sets.newHashSet(privilege), privilegesUpdateMap);
   }
 
+  /**
+   * Alter sentry Role to grant Privilege, as well as persist the permission change
+   * to MSentryPermChange table. If commit fails, then retry.
+   */
   public CommitContext alterSentryRoleGrantPrivileges(final String grantorPrincipal,
-      final String roleName, final Set<TSentryPrivilege> privileges)
+      final String roleName, final Set<TSentryPrivilege> privileges, final Map<TSentryPrivilege, Updateable.Update> privilegesUpdateMap)
       throws Exception {
-    return (CommitContext)tm.executeTransactionWithRetry(
+    return (CommitContext) tm.executeTransactionWithRetry(
         new TransactionBlock() {
           public Object execute(PersistenceManager pm) throws Exception {
             String trimmedRoleName = trimAndLower(roleName);
+
             for (TSentryPrivilege privilege : privileges) {
+              Updateable.Update update = privilegesUpdateMap.get(privilege);
+//              if (update == null) {
+//                throw new Exception ("Each privileges change for alterSentryRoleGrantPrivileges should have corresponding perm change!");
+//              }
+
               // first do grant check
               grantOptionCheck(pm, grantorPrincipal, privilege);
+
+              // Then read current last processed delta change ID.
+              long permChangeID = getLastProcessedPermChangeID(pm);
+
+              // Alter sentry Role and grant Privilege.
               MSentryPrivilege mPrivilege = alterSentryRoleGrantPrivilegeCore(
                   pm, trimmedRoleName, privilege);
+
               if (mPrivilege != null) {
+                // update the privilege to be the one actually updated.
                 convertToTSentryPrivilege(mPrivilege, privilege);
+
+                // Persist the perm change
+                persistUpdate(pm, update, permChangeID);
               }
             }
+
             return new CommitContext(SERVER_UUID, incrementGetSequenceId());
           }
         });
@@ -2582,5 +2605,86 @@ public class SentryStore {
       // update the exist role name set
       existRoleNames.add(lowerRoleName);
     }
+  }
+
+  /**
+   * Persist the delta change. Atomic increase changeID by 1, and persist the change.
+   * Return if update is null.
+   */
+  private void persistUpdate(PersistenceManager pm, Updateable.Update update, long changeID) throws Exception{
+    if (update == null) {
+      return;
+    }
+
+    MSentryPermChange mSentryChange = new MSentryPermChange(changeID + 1, update.serializeToJSON(), System.currentTimeMillis());
+    pm.makePersistent(mSentryChange);
+  }
+
+  /**
+   * Get the last processed perm change.
+   */
+  private long getLastProcessedPermChangeID(PersistenceManager pm) {
+    Query query = pm.newQuery(MSentryPermChange.class);
+    query.setResult("max(this.changeID)");
+    MSentryPermChange permChange = (MSentryPermChange) query.execute();
+    if (permChange == null) {
+      return INIT_CHANGE_ID;
+    } else {
+      return permChange.getChangeID();
+    }
+  }
+
+  /**
+   * Get the MSentryPermChange object by ChangeID.
+   */
+  public MSentryPermChange getMSentryPermChangeByID(final long changeID) {
+    MSentryPermChange result = null;
+    try {
+      result = (MSentryPermChange) tm.executeTransaction(
+      new TransactionBlock() {
+        public Object execute(PersistenceManager pm) throws Exception {
+          Query query = pm.newQuery(MSentryPermChange.class);
+          query.setFilter("this.changeID == t");
+          query.declareParameters("long t");
+          List<MSentryPermChange> permChanges = (List<MSentryPermChange>)query.execute(changeID);
+
+          if (permChanges.size() > 1) {
+            throw new Exception("Each change ID should only corresponds to one perm change!");
+          }
+
+          return permChanges.get(0);
+        }
+      });
+    } catch (Exception e) {
+      LOGGER.error(e.getMessage(), e);
+    }
+    return result;
+  }
+
+  /**
+   * Get the MSentryPathChange object by ChangeID.
+   */
+  public MSentryPathChange getMSentryPathChangeByID(final Long changeID) {
+    MSentryPathChange result = null;
+    try {
+      result = (MSentryPathChange) tm.executeTransaction(
+      new TransactionBlock() {
+        public Object execute(PersistenceManager pm) throws Exception {
+          Query query = pm.newQuery(MSentryPathChange.class);
+          query.setFilter("this.changeID == t");
+          query.declareParameters("long t");
+          List<MSentryPathChange> pathChanges = (List<MSentryPathChange>)query.execute(changeID);
+
+          if (pathChanges.size() > 1) {
+            throw new Exception("Each change ID should only corresponds to one path change!");
+          }
+
+          return pathChanges.get(0);
+        }
+      });
+    } catch (Exception e) {
+      LOGGER.error(e.getMessage(), e);
+    }
+    return result;
   }
 }

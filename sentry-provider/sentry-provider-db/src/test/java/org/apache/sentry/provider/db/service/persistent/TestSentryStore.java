@@ -35,6 +35,9 @@ import org.apache.sentry.core.model.db.AccessConstants;
 import org.apache.sentry.core.common.exception.SentryAlreadyExistsException;
 import org.apache.sentry.core.common.exception.SentryGrantDeniedException;
 import org.apache.sentry.core.common.exception.SentryNoSuchObjectException;
+import org.apache.sentry.hdfs.PermissionsUpdate;
+import org.apache.sentry.hdfs.Updateable;
+import org.apache.sentry.provider.db.service.model.MSentryPermChange;
 import org.apache.sentry.provider.db.service.model.MSentryPrivilege;
 import org.apache.sentry.provider.db.service.model.MSentryRole;
 import org.apache.sentry.provider.db.service.thrift.TSentryActiveRoleSet;
@@ -485,6 +488,7 @@ public class TestSentryStore extends org.junit.Assert {
     String[] columns = {"c1","c2","c3","c4"};
     sentryStore.createSentryRole(roleName);
     Set<TSentryPrivilege> tPrivileges = Sets.newHashSet();
+    Map<TSentryPrivilege, Updateable.Update> privilegesUpdateMap = Maps.newHashMap();
     for (String column : columns) {
       TSentryPrivilege privilege = new TSentryPrivilege();
       privilege.setPrivilegeScope("Column");
@@ -495,8 +499,9 @@ public class TestSentryStore extends org.junit.Assert {
       privilege.setAction(AccessConstants.SELECT);
       privilege.setCreateTime(System.currentTimeMillis());
       tPrivileges.add(privilege);
+      privilegesUpdateMap.put(privilege, null);
     }
-    sentryStore.alterSentryRoleGrantPrivileges(grantor, roleName, tPrivileges);
+    sentryStore.alterSentryRoleGrantPrivileges(grantor, roleName, tPrivileges, privilegesUpdateMap);
     MSentryRole role = sentryStore.getMSentryRoleByName(roleName);
     Set<MSentryPrivilege> privileges = role.getPrivileges();
     assertEquals(privileges.toString(), 4, privileges.size());
@@ -2057,6 +2062,39 @@ public class TestSentryStore extends org.junit.Assert {
     assertEquals(Sets.newHashSet("/user/hive/warehouse/db1.db/table1"), pathsImage.get("db1.table1"));
   }
 
+
+  @Test
+  public void testGrantPrivilegesWithPermUpdate() throws Exception {
+    String roleName = "test-privilege";
+    String grantor = "g1";
+    String server = "server1";
+    String db = "db1";
+    String table = "tbl1";
+    sentryStore.createSentryRole(roleName);
+
+    Map<TSentryPrivilege, Updateable.Update> privilegesUpdateMap = Maps.newHashMap();
+    TSentryPrivilege privilege = new TSentryPrivilege();
+    privilege.setPrivilegeScope("Column");
+    privilege.setServerName(server);
+    privilege.setDbName(db);
+    privilege.setTableName(table);
+    privilege.setAction(AccessConstants.SELECT);
+    privilege.setCreateTime(System.currentTimeMillis());
+
+    PermissionsUpdate update = new PermissionsUpdate(0, false);
+    update.addPrivilegeUpdate("db1.tbl1").putToAddPrivileges(
+    roleName, privilege.getAction().toUpperCase());
+
+    privilegesUpdateMap.put(privilege, update);
+    sentryStore.alterSentryRoleGrantPrivileges(grantor, roleName, Sets.newHashSet(privilege), privilegesUpdateMap);
+    MSentryRole role = sentryStore.getMSentryRoleByName(roleName);
+    Set<MSentryPrivilege> privileges = role.getPrivileges();
+    assertEquals(privileges.toString(), 1, privileges.size());
+
+    // Query the persisted perm change and ensure it equals to the original one
+    MSentryPermChange permChange = sentryStore.getMSentryPermChangeByID(0);
+    assertEquals(update.serializeToJSON(),permChange.getPermChange());
+  }
 
   protected static void addGroupsToUser(String user, String... groupNames) {
     policyFile.addGroupsToUser(user, groupNames);

@@ -25,6 +25,10 @@ import java.util.LinkedList;
 import org.apache.sentry.hdfs.service.thrift.TPermissionsUpdate;
 import org.apache.sentry.hdfs.service.thrift.TPrivilegeChanges;
 import org.apache.sentry.hdfs.service.thrift.TRoleChanges;
+import org.apache.thrift.TDeserializer;
+import org.apache.thrift.TException;
+import org.apache.thrift.TSerializer;
+import org.apache.thrift.protocol.TSimpleJSONProtocol;
 
 public class PermissionsUpdate implements Updateable.Update {
 
@@ -105,5 +109,17 @@ public class PermissionsUpdate implements Updateable.Update {
   @Override
   public void deserialize(byte[] data) throws IOException {
     ThriftSerializer.deserialize(tPermUpdate, data);
+  }
+
+  @Override
+  public void deserializeFromJSON(String update) throws TException {
+    TDeserializer deserializer = new TDeserializer(new TSimpleJSONProtocol.Factory());
+    deserializer.fromString(tPermUpdate, update);
+  }
+
+  @Override
+  public String serializeToJSON() throws TException {
+    TSerializer serializer = new TSerializer(new TSimpleJSONProtocol.Factory());
+    return serializer.toString(tPermUpdate);
   }
 }
