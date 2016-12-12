@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.sentry.provider.db.cli;
+package org.apache.sentry.provider.db.tools.cli;
 
 import com.budhash.cliche.Command;
 import com.budhash.cliche.Param;

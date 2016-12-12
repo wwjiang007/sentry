@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.sentry.provider.db.cli;
+package org.apache.sentry.provider.db.tools.cli;
 
 import com.google.common.collect.Sets;
 import org.apache.commons.lang.StringUtils;

@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.sentry.provider.db.cli;
+package org.apache.sentry.provider.db.tools.cli;
 
 import com.budhash.cliche.*;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyServiceClient;
