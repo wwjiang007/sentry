@@ -66,6 +66,11 @@ limitations under the License.
       <version>${hive.version}</version>
       <scope>compile</scope>
     </dependency>
+    <dependency>
+      <groupId>com.budhash.cliche</groupId>
+      <artifactId>cliche-shell</artifactId>
+      <version>0.9.3</version>
+    </dependency>
   </dependencies>
 
 </project>
