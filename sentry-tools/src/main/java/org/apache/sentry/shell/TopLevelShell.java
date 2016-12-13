@@ -77,6 +77,31 @@ public class TopLevelShell implements ShellDependent, Runnable {
         return tools.listGroupRoles();
     }
 
+    @Command(description = "Grant role to groups")
+    public void grantRole(String roleName, String ...groups) {
+        tools.grantGroupsToRole(roleName, groups);
+    }
+
+    @Command(abbrev = "grm",
+            description = "Revoke role from groups")
+    public void revokeRole(String roleName, String ...groups) {
+        tools.revokeGroupsFromRole(roleName, groups);
+    }
+
+    @Command(description = "Create Sentry role(s).")
+    public void createRole(
+            @Param(name = "roleName", description = "name of role to create")
+                    String ...roles) {
+        tools.createRoles(roles);
+    }
+
+    @Command(abbrev = "rm", description = "remove Sentry role(s).")
+    public void removeRole(
+            @Param(name = "roleName ...", description = "role names to remove")
+                    String ...roles) {
+        tools.removeRoles(roles);
+    }
+
     @Override
     public void cliSetShell(Shell theShell) {
         this.shell = theShell;
