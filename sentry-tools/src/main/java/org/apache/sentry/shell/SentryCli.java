@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.sentry.provider.db.tools.cli;
+package org.apache.sentry.shell;
 
 import org.apache.commons.cli.*;
 import org.apache.hadoop.conf.Configuration;

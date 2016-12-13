@@ -16,10 +16,9 @@
  * limitations under the License.
  */
 
-package org.apache.sentry.provider.db.tools.cli;
+package org.apache.sentry.shell;
 
 import com.budhash.cliche.Command;
-import com.budhash.cliche.Param;
 import com.budhash.cliche.Shell;
 import com.budhash.cliche.ShellDependent;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyServiceClient;
@@ -27,46 +26,40 @@ import org.apache.sentry.provider.db.service.thrift.SentryPolicyServiceClient;
 import java.util.List;
 
 /**
- * Sentry roles manipulation for CLI.
+ * Sentry group manipulation for CLI
  */
-public class RolesShell implements ShellDependent {
-    @Command(description = "List sentry roles. shows all available roles.")
+public class GroupShell implements ShellDependent {
+    @Command
     public List<String> list() {
-        return tools.listRoles();
+        return tools.listGroups();
     }
 
-    @Command(description = "List sentry roles by group")
-    public List<String> list(
-            @Param(name = "groupName", description = "group name for roles")
-            String group) {
-        return tools.listRoles(group);
+    @Command(abbrev = "lr", header = "[groups]",
+            description = "list groups and their roles")
+    public List<String> listRoles() {
+        return tools.listGroupRoles();
     }
 
-    @Command(description = "Create Sentry role(s).")
-    public void create(
-            @Param(name = "roleName", description = "name of role to create")
-            String ...roles) {
-        tools.createRoles(roles);
+    @Command(description = "Grant role to groups")
+    public void grant(String roleName, String ...groups) {
+        tools.grantGroupsToRole(roleName, groups);
     }
 
-    @Command(description = "remove Sentry role(s).")
-    public void remove(
-            @Param(name = "roleName ...", description = "role names to remove")
-            String ...roles) {
-        tools.removeRoles(roles);
-    }
-
-
-    @Override
-    public void cliSetShell(Shell theShell) {
-        this.shell = theShell;
+    @Command(description = "Revoke role from groups")
+    public void revoke(String roleName, String ...groups) {
+        tools.revokeGroupsFromRole(roleName, groups);
     }
 
     private final ShellUtil tools;
     Shell shell;
 
-    public RolesShell(SentryPolicyServiceClient sentryClient, String authUser) {
+
+    public GroupShell(SentryPolicyServiceClient sentryClient, String authUser) {
         this.tools = new ShellUtil(sentryClient, authUser);
     }
 
+    @Override
+    public void cliSetShell(Shell theShell) {
+        this.shell = theShell;
+    }
 }
