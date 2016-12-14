@@ -21,11 +21,14 @@ package org.apache.sentry.shell;
 import com.google.common.collect.Sets;
 import org.apache.commons.lang.StringUtils;
 import org.apache.sentry.core.common.exception.SentryUserException;
-import org.apache.sentry.provider.db.service.thrift.SentryPolicyServiceClient;
-import org.apache.sentry.provider.db.service.thrift.TSentryGroup;
-import org.apache.sentry.provider.db.service.thrift.TSentryRole;
+import org.apache.sentry.provider.db.service.thrift.*;
+import org.apache.sentry.service.thrift.SentryServiceUtil;
+import org.apache.sentry.service.thrift.ServiceConstants;
 
 import java.util.*;
+
+import static org.apache.sentry.service.thrift.SentryServiceUtil.convertTSentryPrivilegeToStr;
+import static org.apache.sentry.service.thrift.SentryServiceUtil.convertToTSentryPrivilege;
 
 /**
  * ShellUtil implements actual commands
@@ -192,7 +195,62 @@ class ShellUtil {
         }
     }
 
+    void grantPrivilegeToRole(String roleName, String privilege) {
+        TSentryPrivilege tPriv = convertToTSentryPrivilege(privilege);
+        boolean grantOption = tPriv.getGrantOption().equals(TSentryGrantOption.TRUE);
+        try {
+            if (ServiceConstants.PrivilegeScope.SERVER.toString().equals(tPriv.getPrivilegeScope())) {
+                sentryClient.grantServerPrivilege(authUser, roleName, tPriv.getServerName(),
+                        tPriv.getAction(), grantOption);
+                return;
+            }
+            if (ServiceConstants.PrivilegeScope.DATABASE.toString().equals(tPriv.getPrivilegeScope())) {
+                sentryClient.grantDatabasePrivilege(authUser, roleName, tPriv.getServerName(),
+                        tPriv.getDbName(), tPriv.getAction(), grantOption);
+                return;
+            }
+            if (ServiceConstants.PrivilegeScope.TABLE.toString().equals(tPriv.getPrivilegeScope())) {
+                sentryClient.grantTablePrivilege(authUser, roleName, tPriv.getServerName(),
+                        tPriv.getDbName(), tPriv.getTableName(),
+                        tPriv.getAction(), grantOption);
+                return;
+            }
+            if (ServiceConstants.PrivilegeScope.COLUMN.toString().equals(tPriv.getPrivilegeScope())) {
+                sentryClient.grantColumnPrivilege(authUser, roleName, tPriv.getServerName(),
+                        tPriv.getDbName(), tPriv.getTableName(),
+                        tPriv.getColumnName(), tPriv.getAction(), grantOption);
+                return;
+            }
+            if (ServiceConstants.PrivilegeScope.URI.toString().equals(tPriv.getPrivilegeScope())) {
+                sentryClient.grantURIPrivilege(authUser, roleName, tPriv.getServerName(),
+                        tPriv.getURI(), grantOption);
+                return;
+            }
+        } catch (SentryUserException e) {
+            System.out.println("Error granting privilege: " + e.toString());
+        }
+    }
 
+    List<String> listPrivileges(String roleName) {
+        Set<TSentryPrivilege> privileges = null;
+        try {
+            privileges = sentryClient
+                    .listAllPrivilegesByRoleName(authUser, roleName);
+        } catch (SentryUserException e) {
+            System.out.println("Failed to list privileges: " + e.toString());
+        }
+
+        if (privileges == null || privileges.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<String> result = new LinkedList<>();
+        for (TSentryPrivilege privilege : privileges) {
+            String privilegeStr =  convertTSentryPrivilegeToStr(privilege);
+            result.add(privilegeStr);
+        }
+        return result;
+    }
 
     ShellUtil(SentryPolicyServiceClient sentryClient, String authUser) {
         this.sentryClient = sentryClient;

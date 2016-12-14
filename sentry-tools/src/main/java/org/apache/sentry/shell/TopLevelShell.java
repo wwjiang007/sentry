@@ -47,16 +47,22 @@ public class TopLevelShell implements ShellDependent, Runnable {
                 this);
     }
 
-    @Command(description="listRoles, create and remove roles")
+    @Command(description="list, create and remove roles")
     public void roles() throws IOException {
         ShellFactory.createSubshell("roles", shell, "roles commands",
                 new RolesShell(sentryClient, authUser)).commandLoop();
     }
 
-    @Command(description = "listRoles, create and remove groups")
+    @Command(description = "list, create and remove groups")
     public void groups() throws IOException {
         ShellFactory.createSubshell("groups", shell, "groups commands",
                 new GroupShell(sentryClient, authUser)).commandLoop();
+    }
+
+    @Command(description = "list, create and remove privileges")
+    public void privileges() throws IOException {
+        ShellFactory.createSubshell("privileges", shell, "privileges commands",
+                new PrivsShell(sentryClient, authUser)).commandLoop();
     }
 
     @Command(description = "List sentry roles. shows all available roles.")

@@ -37,7 +37,7 @@ public final class SentryServiceUtil {
   // parse the privilege in String and get the TSentryPrivilege as result
   public static TSentryPrivilege convertToTSentryPrivilege(String privilegeStr) {
     TSentryPrivilege tSentryPrivilege = new TSentryPrivilege();
-    for (String authorizable : SentryConstants.AUTHORIZABLE_SPLITTER.split(privilegeStr)) {
+     for (String authorizable : SentryConstants.AUTHORIZABLE_SPLITTER.split(privilegeStr)) {
       KeyValue tempKV = new KeyValue(authorizable);
       String key = tempKV.getKey();
       String value = tempKV.getValue();
