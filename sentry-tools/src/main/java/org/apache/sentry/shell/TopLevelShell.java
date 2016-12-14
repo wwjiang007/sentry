@@ -108,6 +108,26 @@ public class TopLevelShell implements ShellDependent, Runnable {
         tools.removeRoles(roles);
     }
 
+    @Command(description = "list Sentry privileges")
+    public String listPrivileges() {
+        return tools.listPrivileges();
+    }
+
+    @Command(description = "list Sentry privileges")
+    public List<String> listPrivileges(String roleName) {
+        return tools.listPrivileges(roleName);
+    }
+
+    @Command(description = "Grant privilege to role")
+    public void grantPrivilege(String roleName, String privilege) {
+        tools.grantPrivilegeToRole(roleName, privilege);
+    }
+
+    @Command
+    public void revokePrivilege(String roleName, String privilege) {
+        tools.revokePrivilegeFromRole(roleName, privilege);
+    }
+
     @Override
     public void cliSetShell(Shell theShell) {
         this.shell = theShell;

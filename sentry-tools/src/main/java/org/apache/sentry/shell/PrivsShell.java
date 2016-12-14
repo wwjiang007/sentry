@@ -35,10 +35,19 @@ public class PrivsShell implements ShellDependent {
     }
 
     @Command
+    public String list() {
+        return tools.listPrivileges();
+    }
+
+    @Command
     public List<String> list(String roleName) {
         return tools.listPrivileges(roleName);
     }
 
+    @Command
+    public void revoke(String roleName, String privilege) {
+        tools.revokePrivilegeFromRole(roleName, privilege);
+    }
 
     public PrivsShell(SentryPolicyServiceClient sentryClient, String authUser) {
         this.tools = new ShellUtil(sentryClient, authUser);

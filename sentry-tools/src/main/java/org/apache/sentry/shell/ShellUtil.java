@@ -22,7 +22,6 @@ import com.google.common.collect.Sets;
 import org.apache.commons.lang.StringUtils;
 import org.apache.sentry.core.common.exception.SentryUserException;
 import org.apache.sentry.provider.db.service.thrift.*;
-import org.apache.sentry.service.thrift.SentryServiceUtil;
 import org.apache.sentry.service.thrift.ServiceConstants;
 
 import java.util.*;
@@ -36,23 +35,13 @@ import static org.apache.sentry.service.thrift.SentryServiceUtil.convertToTSentr
 class ShellUtil {
 
     List<String> listRoles() {
-        Set<TSentryRole> roles = null;
+        List<String> roles = null;
         try {
-            roles = sentryClient.listRoles(authUser);
+            return getRoles();
         } catch (SentryUserException e) {
             System.out.println("Error listing roles: " + e.toString());
         }
-        List<String> result = new ArrayList<>();
-        if (roles == null || roles.isEmpty()) {
-            return result;
-        }
-
-        for(TSentryRole role: roles) {
-            result.add(role.getRoleName());
-        }
-
-        Collections.sort(result);
-        return result;
+        return new LinkedList<>();
     }
 
     List<String> listRoles(String group) {
@@ -250,6 +239,86 @@ class ShellUtil {
             result.add(privilegeStr);
         }
         return result;
+    }
+
+    /**
+     * List all privileges
+     * @return string with privilege info for all roles
+     */
+    String listPrivileges() {
+        List<String> roles = null;
+        try {
+            roles = getRoles();
+        } catch (SentryUserException e) {
+            System.out.println("failed to get role names: " + e.toString());
+        }
+
+        if (roles == null || roles.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder result = new StringBuilder();
+        for (String role: roles) {
+            List<String> privs = listPrivileges(role);
+            if (privs.isEmpty()) {
+                continue;
+            }
+            result.append(role).append(" = ");
+            result.append(StringUtils.join(listPrivileges(role), ",\n\t"));
+            result.append('\n');
+        }
+        return result.toString();
+    }
+
+    void revokePrivilegeFromRole(String roleName, String privilegeStr) {
+        TSentryPrivilege tSentryPrivilege = convertToTSentryPrivilege(privilegeStr);
+        boolean grantOption = tSentryPrivilege.getGrantOption().equals(TSentryGrantOption.TRUE) ? true : false;
+
+        try {
+            if (ServiceConstants.PrivilegeScope.SERVER.toString().equals(tSentryPrivilege.getPrivilegeScope())) {
+                sentryClient.revokeServerPrivilege(authUser, roleName, tSentryPrivilege.getServerName(),
+                        grantOption);
+                return;
+            }
+            if (ServiceConstants.PrivilegeScope.DATABASE.toString().equals(tSentryPrivilege.getPrivilegeScope())) {
+                sentryClient.revokeDatabasePrivilege(authUser, roleName, tSentryPrivilege.getServerName(),
+                        tSentryPrivilege.getDbName(), tSentryPrivilege.getAction(), grantOption);
+                return;
+            }
+            if (ServiceConstants.PrivilegeScope.TABLE.toString().equals(tSentryPrivilege.getPrivilegeScope())) {
+                sentryClient.revokeTablePrivilege(authUser, roleName, tSentryPrivilege.getServerName(),
+                        tSentryPrivilege.getDbName(), tSentryPrivilege.getTableName(),
+                        tSentryPrivilege.getAction(), grantOption);
+                return;
+            }
+            if (ServiceConstants.PrivilegeScope.COLUMN.toString().equals(tSentryPrivilege.getPrivilegeScope())) {
+                sentryClient.revokeColumnPrivilege(authUser, roleName, tSentryPrivilege.getServerName(),
+                        tSentryPrivilege.getDbName(), tSentryPrivilege.getTableName(),
+                        tSentryPrivilege.getColumnName(), tSentryPrivilege.getAction(), grantOption);
+                return;
+            }
+            if (ServiceConstants.PrivilegeScope.URI.toString().equals(tSentryPrivilege.getPrivilegeScope())) {
+                sentryClient.revokeURIPrivilege(authUser, roleName, tSentryPrivilege.getServerName(),
+                        tSentryPrivilege.getURI(), grantOption);
+                return;
+            }
+        } catch (SentryUserException e) {
+            System.out.println("failed to revoke privilege: " + e.toString());
+        }
+    }
+
+
+    private List<String>getRoles() throws SentryUserException {
+        // Collect role names
+        Set<TSentryRole> roles = null;
+        roles = sentryClient.listRoles(authUser);
+        List<String> roleNames = new ArrayList<>();
+        for(TSentryRole role: roles) {
+            roleNames.add(role.getRoleName());
+        }
+
+        Collections.sort(roleNames);
+        return roleNames;
     }
 
     ShellUtil(SentryPolicyServiceClient sentryClient, String authUser) {
