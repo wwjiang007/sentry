@@ -34,6 +34,10 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Properties;
 
+import static org.apache.sentry.service.thrift.ServiceConstants.ClientConfig.SERVER_RPC_ADDRESS;
+import static org.apache.sentry.service.thrift.ServiceConstants.ServerConfig.SECURITY_MODE;
+import static org.apache.sentry.service.thrift.ServiceConstants.ServerConfig.SECURITY_MODE_NONE;
+
 /**
  * Sentry interactive tool
  */
@@ -44,8 +48,18 @@ public class SentryCli {
     private Options options = new Options();
     private CommandLine cmd;
 
+    private static final String localhost = "localhost";
+    private static final String defaultPort = "8038";
+
+
     private static final String configOpt = "config";
     private static final String userOpt = "user";
+    private static final String hostOpt = "host";
+
+    private static final String configEnv = "SENTRY_CONFIG";
+    private static final String hostEnv = "SENTRY_HOST";
+    private static final String userEnv = "SENTRY_USER";
+
 
     private SentryPolicyServiceClient sentryClient;
 
@@ -76,6 +90,7 @@ public class SentryCli {
         options.addOption("h", "help", false, "show help");
         // file path of sentry-site
         options.addOption("U", userOpt, true, "auth user");
+        options.addOption("H", hostOpt, true, "host address");
         options.addOption("c", configOpt, true, "sentry configuration");
         options.addOption("L", LOG4J_CONF, true, "Location of log4j properties file");
         CommandLineParser parser = new GnuParser();
@@ -112,15 +127,6 @@ public class SentryCli {
      */
     private void init() {
         Map<String, String> env = System.getenv();
-        String pathConf = cmd.getOptionValue(configOpt);
-        if (pathConf == null) {
-            pathConf = env.get("SENTRY_CONFIG");
-        }
-        if (pathConf == null) {
-            System.out.println("Missing config file");
-            System.exit(1);
-        }
-
         String log4jconf = cmd.getOptionValue(LOG4J_CONF);
         if (log4jconf != null && log4jconf.length() > 0) {
             Properties log4jProperties = new Properties();
@@ -141,11 +147,38 @@ public class SentryCli {
 
             PropertyConfigurator.configure(log4jProperties);
         }
-        Configuration conf = new Configuration();
-        conf.addResource(new Path(pathConf));
 
-        requestorName = cmd.getOptionValue(userOpt, "");
-        if (requestorName.isEmpty()) {
+        String host = cmd.getOptionValue(hostOpt);
+        if (host == null) {
+            host = env.get(hostEnv);
+        }
+
+        String pathConf = cmd.getOptionValue(configOpt);
+        if (pathConf == null) {
+            pathConf = env.get(configEnv);
+        }
+        if (host == null && pathConf == null) {
+            host = localhost + ":" + defaultPort;
+        }
+
+        Configuration conf = new Configuration();
+
+        if (pathConf != null) {
+            conf.addResource(new Path(pathConf));
+        } else {
+            conf.set(SECURITY_MODE, SECURITY_MODE_NONE);
+        }
+
+        if (host != null) {
+            conf.set(SERVER_RPC_ADDRESS, host);
+        }
+
+        requestorName = cmd.getOptionValue(userOpt);
+        if (requestorName == null) {
+            requestorName = env.get(userEnv);
+        }
+        if (requestorName == null) {
+
             UserGroupInformation ugi = null;
             try {
                 ugi = UserGroupInformation.getLoginUser();
