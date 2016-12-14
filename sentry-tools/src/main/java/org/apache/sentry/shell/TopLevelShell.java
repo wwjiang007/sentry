@@ -84,13 +84,20 @@ public class TopLevelShell implements ShellDependent, Runnable {
     }
 
     @Command(description = "Grant role to groups")
-    public void grantRole(String roleName, String ...groups) {
+    public void grantRole(
+            @Param(name = "roleName")
+            String roleName,
+            @Param(name = "group...") String ...groups) {
         tools.grantGroupsToRole(roleName, groups);
     }
 
     @Command(abbrev = "grm",
             description = "Revoke role from groups")
-    public void revokeRole(String roleName, String ...groups) {
+    public void revokeRole(
+            @Param(name = "roleName")
+            String roleName,
+            @Param(name = "group...")
+            String ...groups) {
         tools.revokeGroupsFromRole(roleName, groups);
     }
 
@@ -114,17 +121,27 @@ public class TopLevelShell implements ShellDependent, Runnable {
     }
 
     @Command(description = "list Sentry privileges")
-    public List<String> listPrivileges(String roleName) {
+    public List<String> listPrivileges(
+            @Param(name = "roleName")
+            String roleName) {
         return tools.listPrivileges(roleName);
     }
 
     @Command(description = "Grant privilege to role")
-    public void grantPrivilege(String roleName, String privilege) {
+    public void grantPrivilege(
+            @Param(name = "roleName")
+            String roleName,
+            @Param(name = "privilege", description = "privilege string, e.g. server=s1->db=foo")
+            String privilege) {
         tools.grantPrivilegeToRole(roleName, privilege);
     }
 
     @Command
-    public void revokePrivilege(String roleName, String privilege) {
+    public void revokePrivilege(
+            @Param(name = "roleName")
+            String roleName,
+            @Param(name = "privilege", description = "privilege string, e.g. server=s1->db=foo")
+            String privilege) {
         tools.revokePrivilegeFromRole(roleName, privilege);
     }
 

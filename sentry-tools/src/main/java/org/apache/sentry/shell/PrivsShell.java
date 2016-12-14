@@ -19,6 +19,7 @@
 package org.apache.sentry.shell;
 
 import com.budhash.cliche.Command;
+import com.budhash.cliche.Param;
 import com.budhash.cliche.Shell;
 import com.budhash.cliche.ShellDependent;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyServiceClient;
@@ -30,7 +31,12 @@ public class PrivsShell implements ShellDependent {
     Shell shell;
 
     @Command(description = "Grant privilege to role")
-    public void grant(String roleName, String privilege) {
+    public void grant(
+            @Param(name = "roleName")
+            String roleName,
+            @Param(name = "privilege",
+                    description = "privilege string, e.g. server=s1->db=foo")
+            String privilege) {
         tools.grantPrivilegeToRole(roleName, privilege);
     }
 
@@ -40,12 +46,19 @@ public class PrivsShell implements ShellDependent {
     }
 
     @Command
-    public List<String> list(String roleName) {
+    public List<String> list(
+            @Param(name = "roleName")
+            String roleName) {
         return tools.listPrivileges(roleName);
     }
 
     @Command
-    public void revoke(String roleName, String privilege) {
+    public void revoke(
+            @Param(name = "roleName")
+            String roleName,
+            @Param(name = "privilege",
+                    description = "privilege string, e.g. server=s1->db=foo")
+            String privilege) {
         tools.revokePrivilegeFromRole(roleName, privilege);
     }
 

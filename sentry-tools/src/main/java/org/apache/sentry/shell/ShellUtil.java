@@ -236,6 +236,9 @@ class ShellUtil {
         List<String> result = new LinkedList<>();
         for (TSentryPrivilege privilege : privileges) {
             String privilegeStr =  convertTSentryPrivilegeToStr(privilege);
+            if (privilegeStr.isEmpty()) {
+                continue;
+            }
             result.add(privilegeStr);
         }
         return result;
