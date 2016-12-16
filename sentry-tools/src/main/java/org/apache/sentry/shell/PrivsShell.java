@@ -28,7 +28,7 @@ import java.util.List;
 
 public class PrivsShell implements ShellDependent {
     private final ShellUtil tools;
-    Shell shell;
+    private Shell shell;
 
     @Command(description = "Grant privilege to role")
     public void grant(
@@ -60,7 +60,7 @@ public class PrivsShell implements ShellDependent {
         tools.revokePrivilegeFromRole(roleName, privilege);
     }
 
-    public PrivsShell(SentryPolicyServiceClient sentryClient, String authUser) {
+    PrivsShell(SentryPolicyServiceClient sentryClient, String authUser) {
         this.tools = new ShellUtil(sentryClient, authUser);
     }
 

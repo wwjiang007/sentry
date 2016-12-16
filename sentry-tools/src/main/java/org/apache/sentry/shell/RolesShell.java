@@ -65,7 +65,7 @@ public class RolesShell implements ShellDependent {
     private final ShellUtil tools;
     Shell shell;
 
-    public RolesShell(SentryPolicyServiceClient sentryClient, String authUser) {
+    RolesShell(SentryPolicyServiceClient sentryClient, String authUser) {
         this.tools = new ShellUtil(sentryClient, authUser);
     }
 

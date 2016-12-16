@@ -35,7 +35,6 @@ import static org.apache.sentry.service.thrift.SentryServiceUtil.convertToTSentr
 class ShellUtil {
 
     List<String> listRoles() {
-        List<String> roles = null;
         try {
             return getRoles();
         } catch (SentryUserException e) {
@@ -213,7 +212,6 @@ class ShellUtil {
             if (ServiceConstants.PrivilegeScope.URI.toString().equals(tPriv.getPrivilegeScope())) {
                 sentryClient.grantURIPrivilege(authUser, roleName, tPriv.getServerName(),
                         tPriv.getURI(), grantOption);
-                return;
             }
         } catch (SentryUserException e) {
             System.out.println("Error granting privilege: " + e.toString());
@@ -275,7 +273,7 @@ class ShellUtil {
 
     void revokePrivilegeFromRole(String roleName, String privilegeStr) {
         TSentryPrivilege tSentryPrivilege = convertToTSentryPrivilege(privilegeStr);
-        boolean grantOption = tSentryPrivilege.getGrantOption().equals(TSentryGrantOption.TRUE) ? true : false;
+        boolean grantOption = tSentryPrivilege.getGrantOption().equals(TSentryGrantOption.TRUE);
 
         try {
             if (ServiceConstants.PrivilegeScope.SERVER.toString().equals(tSentryPrivilege.getPrivilegeScope())) {
@@ -303,7 +301,6 @@ class ShellUtil {
             if (ServiceConstants.PrivilegeScope.URI.toString().equals(tSentryPrivilege.getPrivilegeScope())) {
                 sentryClient.revokeURIPrivilege(authUser, roleName, tSentryPrivilege.getServerName(),
                         tSentryPrivilege.getURI(), grantOption);
-                return;
             }
         } catch (SentryUserException e) {
             System.out.println("failed to revoke privilege: " + e.toString());
@@ -313,8 +310,7 @@ class ShellUtil {
 
     private List<String>getRoles() throws SentryUserException {
         // Collect role names
-        Set<TSentryRole> roles = null;
-        roles = sentryClient.listRoles(authUser);
+        final Set<TSentryRole> roles = sentryClient.listRoles(authUser);
         List<String> roleNames = new ArrayList<>();
         for(TSentryRole role: roles) {
             roleNames.add(role.getRoleName());

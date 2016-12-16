@@ -56,10 +56,10 @@ public class GroupShell implements ShellDependent {
     }
 
     private final ShellUtil tools;
-    Shell shell;
+    private Shell shell;
 
 
-    public GroupShell(SentryPolicyServiceClient sentryClient, String authUser) {
+    GroupShell(SentryPolicyServiceClient sentryClient, String authUser) {
         this.tools = new ShellUtil(sentryClient, authUser);
     }
 

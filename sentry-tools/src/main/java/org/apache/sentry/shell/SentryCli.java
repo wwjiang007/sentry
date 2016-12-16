@@ -25,8 +25,6 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.log4j.PropertyConfigurator;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyServiceClient;
 import org.apache.sentry.service.thrift.SentryServiceClientFactory;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -42,7 +40,6 @@ import static org.apache.sentry.service.thrift.ServiceConstants.ServerConfig.SEC
  * Sentry interactive tool
  */
 public class SentryCli {
-    private static final Logger log = LoggerFactory.getLogger(SentryCli.class.getName());
     private static final String LOG4J_CONF = "log4jConf";
     private final String[] args;
     private Options options = new Options();
@@ -63,11 +60,11 @@ public class SentryCli {
 
     private SentryPolicyServiceClient sentryClient;
 
-    public SentryPolicyServiceClient getSentryClient() {
+    private SentryPolicyServiceClient getSentryClient() {
         return sentryClient;
     }
 
-    public String getRequestorName() {
+    private String getRequestorName() {
         return requestorName;
     }
 
@@ -85,7 +82,7 @@ public class SentryCli {
      * Construct SentryCli from arguments
      * @param args command-line arguments
      */
-    public SentryCli(String[] args) {
+    private SentryCli(String[] args) {
         this.args = args;
         options.addOption("h", "help", false, "show help");
         // file path of sentry-site
@@ -103,23 +100,6 @@ public class SentryCli {
             help();
         }
         init();
-    }
-
-    /**
-     * Parse command-line arguments.
-     */
-    public void parse() {
-        CommandLineParser parser = new GnuParser();
-        try {
-            cmd = parser.parse(options, args);
-            if (cmd.hasOption("h")) {
-                help();
-            }
-        } catch (ParseException e) {
-            log.warn("error in parsing expression", e);
-            help();
-            System.exit(1);
-        }
     }
 
     /**
