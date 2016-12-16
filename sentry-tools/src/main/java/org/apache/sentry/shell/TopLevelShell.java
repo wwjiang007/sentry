@@ -72,8 +72,7 @@ public class TopLevelShell implements ShellDependent, Runnable {
 
     @Command(description = "List sentry roles by group")
     public List<String> listRoles(
-            @Param(name = "groupName")
-            String group) {
+            @Param(name = "groupName") String group) {
         return tools.listRoles(group);
     }
 
@@ -85,19 +84,16 @@ public class TopLevelShell implements ShellDependent, Runnable {
 
     @Command(description = "Grant role to groups")
     public void grantRole(
-            @Param(name = "roleName")
-            String roleName,
-            @Param(name = "group...") String ...groups) {
+            @Param(name = "roleName") String roleName,
+            @Param(name = "group") String ...groups) {
         tools.grantGroupsToRole(roleName, groups);
     }
 
     @Command(abbrev = "grm",
             description = "Revoke role from groups")
     public void revokeRole(
-            @Param(name = "roleName")
-            String roleName,
-            @Param(name = "group...")
-            String ...groups) {
+            @Param(name = "roleName") String roleName,
+            @Param(name = "group") String ...groups) {
         tools.revokeGroupsFromRole(roleName, groups);
     }
 
@@ -110,7 +106,7 @@ public class TopLevelShell implements ShellDependent, Runnable {
 
     @Command(abbrev = "rm", description = "remove Sentry role(s).")
     public void removeRole(
-            @Param(name = "roleName ...", description = "role names to remove")
+            @Param(name = "roleName", description = "role names to remove")
                     String ...roles) {
         tools.removeRoles(roles);
     }

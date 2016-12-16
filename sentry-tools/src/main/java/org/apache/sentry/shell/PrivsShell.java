@@ -47,15 +47,13 @@ public class PrivsShell implements ShellDependent {
 
     @Command
     public List<String> list(
-            @Param(name = "roleName")
-            String roleName) {
+            @Param(name = "roleName") String roleName) {
         return tools.listPrivileges(roleName);
     }
 
     @Command
     public void revoke(
-            @Param(name = "roleName")
-            String roleName,
+            @Param(name = "roleName") String roleName,
             @Param(name = "privilege",
                     description = "privilege string, e.g. server=s1->db=foo")
             String privilege) {

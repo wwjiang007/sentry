@@ -19,6 +19,7 @@
 package org.apache.sentry.shell;
 
 import com.budhash.cliche.Command;
+import com.budhash.cliche.Param;
 import com.budhash.cliche.Shell;
 import com.budhash.cliche.ShellDependent;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyServiceClient;
@@ -41,12 +42,16 @@ public class GroupShell implements ShellDependent {
     }
 
     @Command(description = "Grant role to groups")
-    public void grant(String roleName, String ...groups) {
+    public void grant(
+            @Param(name = "roleName") String roleName,
+            @Param(name = "group") String ...groups) {
         tools.grantGroupsToRole(roleName, groups);
     }
 
     @Command(description = "Revoke role from groups")
-    public void revoke(String roleName, String ...groups) {
+    public void revoke(
+            @Param(name = "roleName") String roleName,
+            @Param(name = "group") String ...groups) {
         tools.revokeGroupsFromRole(roleName, groups);
     }
 

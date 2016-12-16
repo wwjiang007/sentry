@@ -142,7 +142,7 @@ public class SentryCli {
                 log4jProperties.load(istream);
                 istream.close();
             } catch (IOException e) {
-                e.printStackTrace();
+                System.out.println(e.toString());
             }
 
             PropertyConfigurator.configure(log4jProperties);
@@ -170,6 +170,7 @@ public class SentryCli {
         }
 
         if (host != null) {
+            System.out.println("Connecting to " + host);
             conf.set(SERVER_RPC_ADDRESS, host);
         }
 
@@ -192,6 +193,7 @@ public class SentryCli {
             sentryClient = SentryServiceClientFactory.create(conf);
         } catch (Exception e) {
             System.out.println("Failed to connect to Sentry server: " + e.toString());
+            e.printStackTrace();
         }
     }
 
