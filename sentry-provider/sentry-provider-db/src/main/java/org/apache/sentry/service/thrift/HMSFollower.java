@@ -30,6 +30,7 @@ import org.apache.hadoop.security.SaslRpcServer;
 import org.apache.hive.hcatalog.messaging.HCatEventMessage;
 import org.apache.sentry.binding.hive.conf.HiveAuthzConf;
 import org.apache.sentry.core.common.exception.*;
+import org.apache.sentry.hdfs.PathsUpdate;
 import org.apache.sentry.hdfs.PermissionsUpdate;
 import org.apache.sentry.hdfs.UpdateableAuthzPaths;
 import org.apache.sentry.hdfs.FullUpdateInitializer;
@@ -49,6 +50,8 @@ import java.io.File;
 import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.apache.sentry.binding.hive.conf.HiveAuthzConf.AuthzConfVars.AUTHZ_SYNC_CREATE_WITH_POLICY_STORE;
 import static org.apache.sentry.binding.hive.conf.HiveAuthzConf.AuthzConfVars.AUTHZ_SYNC_DROP_WITH_POLICY_STORE;
@@ -74,7 +77,6 @@ public class HMSFollower implements Runnable {
   private static final int maxRetriesForLogin = 3;
   private static final int maxRetriesForConnection = 3;
 
-  private volatile UpdateableAuthzPaths authzPaths;
   private boolean needHiveSnapshot = true;
   private final LeaderStatusMonitor leaderMonitor;
 
@@ -84,8 +86,11 @@ public class HMSFollower implements Runnable {
     authzConf = conf;
     this.leaderMonitor = leaderMonitor;
     sentryStore = new SentryStore(authzConf);
-    //TODO: Initialize currentEventID from Sentry db
-    currentEventID = 0;
+
+    // Initialize currentEventID from Sentry db. If currentEventID
+    // is empty, need to retrieve a hive snapshot, otherwise not.
+    currentEventID = getStoredCurrentID();
+    needHiveSnapshot = (currentEventID == SentryStore.EMPTY_CHANGE_ID);
   }
 
   @VisibleForTesting
@@ -227,12 +232,13 @@ public class HMSFollower implements Runnable {
 
         CurrentNotificationEventId eventIDBefore = null;
         CurrentNotificationEventId eventIDAfter = null;
+        Map<String, Set<String>> pathsFullSnapshot = null;
 
         try {
           eventIDBefore = client.getCurrentNotificationEventId();
           LOGGER.info(String.format("Before fetching hive full snapshot, Current NotificationID = %s.",
               eventIDBefore));
-          fetchFullUpdate();
+          pathsFullSnapshot = fetchFullUpdate();
           eventIDAfter = client.getCurrentNotificationEventId();
           LOGGER.info(String.format("After fetching hive full snapshot, Current NotificationID = %s.",
               eventIDAfter));
@@ -252,6 +258,7 @@ public class HMSFollower implements Runnable {
             eventIDAfter));
         needHiveSnapshot = false;
         currentEventID = eventIDAfter.getEventId();
+        sentryStore.persistFullPathsImage(pathsFullSnapshot);
       }
 
       NotificationEventResponse response = client.getNextNotification(currentEventID, Integer.MAX_VALUE, null);
@@ -261,25 +268,30 @@ public class HMSFollower implements Runnable {
         processNotificationEvents(response.getEvents());
       }
     } catch (TException e) {
-      LOGGER.error("ThriftException occured fetching Notification entries, will try");
+      LOGGER.error("ThriftException occurred fetching Notification entries, will try");
       e.printStackTrace();
     } catch (SentryInvalidInputException|SentryInvalidHMSEventException e) {
       throw new RuntimeException(e);
+    } catch (Exception e) {
+      LOGGER.error("Exception occurred persisting Hive full snapshot into DB");
+      e.printStackTrace();
     }
   }
 
   /**
-   * Retrieve HMS full snapshot.
+   * Retrieve a HMS full snapshot.
+   *
+   * @return UpdateableAuthzPaths
+   * @throws Exception
    */
-  private void fetchFullUpdate() throws Exception {
+  private  Map<String, Set<String>> fetchFullUpdate() throws Exception {
     FullUpdateInitializer updateInitializer = null;
 
     try {
       updateInitializer = new FullUpdateInitializer(client, authzConf);
-      // TODO - do we need to save returned authz path?
-      updateInitializer.createInitialUpdate();
-      // TODO: notify HDFS plugin
+      Map<String, Set<String>> pathsUpdate = updateInitializer.createInitialUpdate();
       LOGGER.info("#### Hive full update initialization complete !!");
+      return pathsUpdate;
     } finally {
       if (updateInitializer != null) {
         try {
@@ -289,6 +301,16 @@ public class HMSFollower implements Runnable {
         }
       }
     }
+  }
+
+  /**
+   * Get current eventID from Sentry DB.
+   *
+   * @return the stored currentID
+   * @throws Exception
+   */
+  private long getStoredCurrentID() throws Exception {
+    return sentryStore.getLastProcessedPathChangeID();
   }
 
   private boolean syncWithPolicyStore(HiveAuthzConf.AuthzConfVars syncConfVar) {

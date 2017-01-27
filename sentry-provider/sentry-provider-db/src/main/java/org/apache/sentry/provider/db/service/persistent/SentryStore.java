@@ -49,7 +49,6 @@ import org.apache.sentry.core.common.exception.*;
 import org.apache.sentry.core.common.utils.SentryConstants;
 import org.apache.sentry.core.model.db.AccessConstants;
 import org.apache.sentry.core.model.db.DBModelAuthorizable.AuthorizableType;
-import org.apache.sentry.hdfs.Updateable;
 import org.apache.sentry.provider.db.service.model.*;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyStoreProcessor;
 import org.apache.sentry.provider.db.service.thrift.TSentryActiveRoleSet;
@@ -105,7 +104,7 @@ public class SentryStore {
   // is starting from 1.
   public static final long INIT_CHANGE_ID = 1L;
 
-  private static final long EMPTY_CHANGE_ID = 0L;
+  public static final long EMPTY_CHANGE_ID = 0L;
 
   // For counters, representation of the "unknown value"
   private static final long COUNT_VALUE_UNKNOWN = -1;
@@ -2300,6 +2299,24 @@ public class SentryStore {
     return retVal;
   }
 
+  /**
+   * Persist a full hive snapshot into Sentry DB in a single transaction.
+   *
+   * @param authzPaths Mapping of hiveObj -> [Paths]
+   * @throws Exception
+   */
+  public void persistFullPathsImage(final Map<String, Set<String>> authzPaths) throws Exception {
+    tm.executeTransactionWithRetry(
+      new TransactionBlock() {
+        public Object execute(PersistenceManager pm) throws Exception {
+          for (Map.Entry<String, Set<String>> authzPath : authzPaths.entrySet()) {
+            createAuthzPathsMappingCore(pm, authzPath.getKey(), authzPath.getValue());
+          }
+          return null;
+        }
+      });
+  }
+
   public void createAuthzPathsMapping(final String hiveObj,
       final Set<String> paths) throws Exception {
     tm.executeTransactionWithRetry(
@@ -3339,10 +3356,10 @@ public class SentryStore {
   }
 
   /**
-   * Get the MSentryPermChange object by ChangeID. Internally invoke
+   * Get the last processed perm change ID. Internally invoke
    * getLastProcessedPermChangeIDCore().
    *
-   * @return MSentryPermChange
+   * @return the change id of last processed MSentryPermChange.
    */
   @VisibleForTesting
   long getLastProcessedPermChangeID() throws Exception {
@@ -3352,6 +3369,38 @@ public class SentryStore {
           return getLastProcessedPermChangeIDCore(pm);
         }
       });
+  }
+
+  /**
+   * Get the last processed path change ID.
+   *
+   * @param pm the PersistenceManager
+   * @return the last processed path changedID
+   */
+  private long getLastProcessedPathChangeIDCore(PersistenceManager pm) {
+    Query query = pm.newQuery(MSentryPathChange.class);
+    query.setResult("max(this.changeID)");
+    Long changeID = (Long) query.execute();
+    if (changeID == null) {
+      return EMPTY_CHANGE_ID;
+    } else {
+      return changeID;
+    }
+  }
+
+  /**
+   * Get the last processed path change ID. Internally invoke
+   * getLastProcessedPathChangeIDCore().
+   *
+   * @return the change id of last processed MSentryPathChange.
+   */
+  public long getLastProcessedPathChangeID() throws Exception {
+    return tm.executeTransaction(
+    new TransactionBlock<Long>() {
+      public Long execute(PersistenceManager pm) throws Exception {
+        return getLastProcessedPathChangeIDCore(pm);
+      }
+    });
   }
 
   /**
