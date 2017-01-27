@@ -15,12 +15,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.sentry.hdfs;
+
+import java.util.List;
 
 /**
  * Interface class for generating/retrieving a full image.
  */
-public interface ImageRetriever<K> {
+public interface UpdateRetriever<K> {
 
   /**
    * Retrieve a full image of type k.
@@ -29,6 +32,7 @@ public interface ImageRetriever<K> {
    * @return a full snapshot of type K
    * @throws Exception
    */
-  K retrieveFullImage() throws Exception;
+  List<K> retrievePartialUpdate(long seqNum) throws Exception;
 
+  boolean isPartialUpdateAvailable(long seqNum) throws Exception;
 }

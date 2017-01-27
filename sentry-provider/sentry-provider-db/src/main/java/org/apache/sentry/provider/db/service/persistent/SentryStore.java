@@ -3404,6 +3404,33 @@ public class SentryStore {
   }
 
   /**
+   * Get the list of MSentryPermChange objects greater than and
+   * equal with the given ChangeID.
+   *
+   * @param changeID
+   * @return the list of MSentryPermChange objects
+   * @throws Exception
+   */
+  public List<MSentryPermChange> getMSentryPermChanges(final long changeID)
+      throws Exception {
+    return tm.executeTransaction(
+    new TransactionBlock<List<MSentryPermChange>>() {
+      public List<MSentryPermChange> execute(PersistenceManager pm) throws Exception {
+        Query query = pm.newQuery(MSentryPermChange.class);
+        query.setFilter("this.changeID >= t");
+        query.declareParameters("long t");
+        List<MSentryPermChange> permChanges =
+            (List<MSentryPermChange>)query.execute(changeID);
+        if (permChanges == null) {
+          noSuchUpdate(changeID);
+        }
+
+        return permChanges;
+      }
+    });
+  }
+
+  /**
    * Get the MSentryPermChange object by ChangeID.
    *
    * @param changeID the given changeID.
@@ -3429,6 +3456,57 @@ public class SentryStore {
   }
 
   /**
+   * Find the MSentryPermChange object by ChangeID.
+   *
+   * @param changeID
+   * @return true if found the MSentryPermChange object, otherwise false.
+   * @throws Exception
+   */
+  public boolean findMSentryPermChangeByID(final long changeID) throws Exception {
+    return tm.executeTransaction(
+    new TransactionBlock<Boolean>() {
+      public Boolean execute(PersistenceManager pm) throws Exception {
+        Query query = pm.newQuery(MSentryPermChange.class);
+        query.setFilter("this.changeID == t");
+        query.declareParameters("long t");
+        List<MSentryPermChange> pathChanges =
+            (List<MSentryPermChange>)query.execute(changeID);
+        if (pathChanges == null) {
+          return false;
+        } else {
+          return true;
+        }
+      }
+    });
+  }
+
+  /**
+   * Get the list of MSentryPathChange objects greater than and
+   * equal with the given ChangeID.
+   *
+   * @param changeID
+   * @return the list of MSentryPathChange objects
+   * @throws Exception
+   */
+  public List<MSentryPathChange> getMSentryPathChanges(final long changeID)
+        throws Exception {
+    return tm.executeTransaction(
+    new TransactionBlock<List<MSentryPathChange>>() {
+      public List<MSentryPathChange> execute(PersistenceManager pm) throws Exception {
+        Query query = pm.newQuery(MSentryPathChange.class);
+        query.setFilter("this.changeID >= t");
+        query.declareParameters("long t");
+        List<MSentryPathChange> pathChanges =
+            (List<MSentryPathChange>)query.execute(changeID);
+        if (pathChanges == null) {
+          noSuchUpdate(changeID);
+        }
+        return pathChanges;
+      }
+    });
+  }
+
+  /**
    * Get the MSentryPathChange object by ChangeID.
    */
   public MSentryPathChange getMSentryPathChangeByID(final long changeID) throws Exception {
@@ -3450,6 +3528,30 @@ public class SentryStore {
       });
   }
 
+  /**
+   * Find the MSentryPathChange object by ChangeID.
+   *
+   * @param changeID
+   * @return true if found the MSentryPathChange object, otherwise false.
+   * @throws Exception
+   */
+  public boolean findMSentryPathChangeByID(final long changeID) throws Exception {
+    return tm.executeTransaction(
+    new TransactionBlock<Boolean>() {
+      public Boolean execute(PersistenceManager pm) throws Exception {
+        Query query = pm.newQuery(MSentryPathChange.class);
+        query.setFilter("this.changeID == t");
+        query.declareParameters("long t");
+        List<MSentryPathChange> pathChanges =
+            (List<MSentryPathChange>)query.execute(changeID);
+        if (pathChanges == null) {
+          return false;
+        } else {
+          return true;
+        }
+      }
+    });
+  }
   /**
    * Execute Perm/Path UpdateTransaction and corresponding actual
    * action transaction, e.g dropSentryRole, in a single transaction.

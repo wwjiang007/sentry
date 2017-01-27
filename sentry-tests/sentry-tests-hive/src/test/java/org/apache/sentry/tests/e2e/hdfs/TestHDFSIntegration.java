@@ -221,7 +221,7 @@ public class TestHDFSIntegration {
       @Override
       public Void run() throws Exception {
         HiveConf hiveConf = new HiveConf();
-        hiveConf.set("sentry.metastore.plugins", "org.apache.sentry.hdfs.MetastorePlugin");
+        //hiveConf.set("sentry.metastore.plugins", "org.apache.sentry.hdfs.MetastorePlugin");
         hiveConf.set("sentry.service.client.server.rpc-address", "localhost");
         hiveConf.set("sentry.hdfs.service.client.server.rpc-address", "localhost");
         hiveConf.set("sentry.hdfs.service.client.server.rpc-port", String.valueOf(sentryPort));
@@ -261,7 +261,8 @@ public class TestHDFSIntegration {
         hiveConf.set("hive.metastore.authorization.storage.checks", "true");
         hiveConf.set("hive.metastore.uris", "thrift://localhost:" + hmsPort);
         hiveConf.set("hive.metastore.pre.event.listeners", "org.apache.sentry.binding.metastore.MetastoreAuthzBinding");
-        hiveConf.set("hive.metastore.event.listeners", "org.apache.sentry.binding.metastore.SentryMetastorePostEventListener");
+        hiveConf.set("hive.metastore.event.listeners", "org.apache.sentry.binding.metastore.SentryMetastorePostEventListenerNotificationLog");
+        hiveConf.set("hcatalog.message.factory.impl.json","org.apache.sentry.binding.metastore.messaging.json.SentryJSONMessageFactory");
         hiveConf.set("hive.security.authorization.task.factory", "org.apache.sentry.binding.hive.SentryHiveAuthorizationTaskFactoryImpl");
         hiveConf.set("hive.server2.session.hook", "org.apache.sentry.binding.hive.HiveAuthzBindingSessionHook");
         hiveConf.set("sentry.metastore.service.users", "hive");// queries made by hive user (beeline) skip meta store check
@@ -451,6 +452,7 @@ public class TestHDFSIntegration {
           properties.put(ServerConfig.RPC_ADDRESS, "localhost");
           properties.put(ServerConfig.RPC_PORT, String.valueOf(sentryPort > 0 ? sentryPort : 0));
           properties.put(ServerConfig.SENTRY_VERIFY_SCHEM_VERSION, "false");
+          properties.put(ServerConfig.SENTRY_NOTIFICATION_LOG_ENABLED,"true");
 
           properties.put(ServerConfig.SENTRY_STORE_GROUP_MAPPING, ServerConfig.SENTRY_STORE_LOCAL_GROUP_MAPPING);
           properties.put(ServerConfig.SENTRY_STORE_GROUP_MAPPING_RESOURCE, policyFileLocation.getPath());

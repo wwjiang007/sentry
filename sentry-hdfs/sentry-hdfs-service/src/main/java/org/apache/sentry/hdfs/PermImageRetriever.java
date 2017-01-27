@@ -37,7 +37,7 @@ public class PermImageRetriever implements ImageRetriever<PermissionsUpdate> {
   }
 
   @Override
-  public PermissionsUpdate retrieveFullImage(long seqNum) throws Exception {
+  public PermissionsUpdate retrieveFullImage() throws Exception {
     try(Timer.Context timerContext =
         SentryHdfsMetricsUtil.getRetrievePermFullImageTimer.time()) {
 
@@ -72,7 +72,7 @@ public class PermImageRetriever implements ImageRetriever<PermissionsUpdate> {
 
       PermissionsUpdate permissionsUpdate = new PermissionsUpdate(tPermUpdate);
       // TODO: use curSeqNum from DB instead of seqNum when doing SENTRY-1567
-      permissionsUpdate.setSeqNum(seqNum);
+      permissionsUpdate.setSeqNum(curSeqNum);
       SentryHdfsMetricsUtil.getPrivilegeChangesHistogram.update(
           tPermUpdate.getPrivilegeChangesSize());
       SentryHdfsMetricsUtil.getRoleChangesHistogram.update(

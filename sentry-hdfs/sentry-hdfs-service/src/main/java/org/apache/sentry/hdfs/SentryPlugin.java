@@ -108,18 +108,16 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
 
   private static final Logger LOGGER = LoggerFactory.getLogger(SentryPlugin.class);
 
-  private final AtomicBoolean fullUpdateHMSWait = new AtomicBoolean(false);
   private final AtomicBoolean fullUpdateHMS = new AtomicBoolean(false);
   private final AtomicBoolean fullUpdateNN = new AtomicBoolean(false);
 
   public static volatile SentryPlugin instance;
 
-  private UpdateForwarder<PathsUpdate> pathsUpdater;
-  private UpdateForwarder<PermissionsUpdate> permsUpdater;
+  private DBUpdateForwarder<PathsUpdate> pathsUpdater;
+  private DBUpdateForwarder<PermissionsUpdate> permsUpdater;
+
   // TODO: Each perm change sequence number should be generated during persistence at sentry store.
   private final AtomicLong permSeqNum = new AtomicLong(5);
-  private PermImageRetriever permImageRetriever;
-  private boolean outOfSync = false;
   /*
    * This number is smaller than starting sequence numbers used by NN and HMS
    * so in both cases its effect is to create appearance of out-of-sync
@@ -129,33 +127,15 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
    */
   private static final long NO_LAST_SEEN_HMS_PATH_SEQ_NUM = 0L;
 
-  /*
-   * Call from HMS to get the last known update sequence #.
-   */
-  long getLastSeenHMSPathSeqNum() {
-    if (!fullUpdateHMS.getAndSet(false)) {
-      return pathsUpdater.getLastSeen();
-    } else {
-      LOGGER.info("SIGNAL HANDLING: asking for full update from HMS");
-      return NO_LAST_SEEN_HMS_PATH_SEQ_NUM;
-    }
-  }
-
   @Override
   public void initialize(Configuration conf, SentryStore sentryStore) throws SentryPluginException {
-    final String[] pathPrefixes = conf
-        .getStrings(ServerConfig.SENTRY_HDFS_INTEGRATION_PATH_PREFIXES,
-            ServerConfig.SENTRY_HDFS_INTEGRATION_PATH_PREFIXES_DEFAULT);
-    final int initUpdateRetryDelayMs =
-        conf.getInt(ServerConfig.SENTRY_HDFS_INIT_UPDATE_RETRY_DELAY_MS,
-            ServerConfig.SENTRY_HDFS_INIT_UPDATE_RETRY_DELAY_DEFAULT);
-    permImageRetriever = new PermImageRetriever(sentryStore);
+    PermImageRetriever permImageRetriever = new PermImageRetriever(sentryStore);
+    PathImageRetriever pathImageRetriever = new PathImageRetriever(sentryStore);
+    PermUpdateRetriever permUpdateRetriever = new PermUpdateRetriever(sentryStore);
+    PathUpdateRetriever pathUpdateRetriever = new PathUpdateRetriever(sentryStore);
+    pathsUpdater = new DBUpdateForwarder<>(pathImageRetriever, pathUpdateRetriever);
+    permsUpdater = new DBUpdateForwarder<>(permImageRetriever, permUpdateRetriever);
 
-    pathsUpdater = UpdateForwarder.create(conf, new UpdateableAuthzPaths(
-        pathPrefixes), new PathsUpdate(0, false), null, 100, initUpdateRetryDelayMs, false);
-    permsUpdater = UpdateForwarder.create(conf,
-        new UpdateablePermissions(permImageRetriever), new PermissionsUpdate(0, false),
-        permImageRetriever, 100, initUpdateRetryDelayMs, true);
     LOGGER.info("Sentry HDFS plugin initialized !!");
     instance = this;
 
@@ -181,7 +161,7 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
     if (!fullUpdateNN.get()) {
       // Most common case - Sentry is NOT handling a full update.
       return pathsUpdater.getAllUpdatesFrom(pathSeqNum);
-    } else if (!fullUpdateHMSWait.get()) {
+    } else {
       /*
        * Sentry is in the middle of signal-triggered full update.
        * It already got a full update from HMS
@@ -215,30 +195,11 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
         LOGGER.warn("SIGNAL HANDLING: returned NULL instead of full update to NameNode (???)");
       }
       return updates;
-    } else {
-      // Sentry is handling a full update, but not yet received full update from HMS
-      LOGGER.warn("SIGNAL HANDLING: sending partial update to NameNode: still waiting for full update from HMS");
-      return pathsUpdater.getAllUpdatesFrom(pathSeqNum);
     }
   }
 
   public List<PermissionsUpdate> getAllPermsUpdatesFrom(long permSeqNum) throws Exception {
     return permsUpdater.getAllUpdatesFrom(permSeqNum);
-  }
-
-  /*
-   * Handle partial (most common) or full update from HMS
-   */
-  public void handlePathUpdateNotification(PathsUpdate update)
-      throws SentryPluginException {
-    pathsUpdater.handleUpdateNotification(update);
-    if (!update.hasFullImage()) { // most common case of partial update
-      LOGGER.debug("Recieved Authz Path update [" + update.getSeqNum() + "]..");
-    } else { // rare case of full update
-      LOGGER.warn("Recieved Authz Path FULL update [" + update.getSeqNum() + "]..");
-      // indicate that we're ready to send full update to NameNode
-      fullUpdateHMSWait.set(false);
-    }
   }
 
   @Override
@@ -250,7 +211,6 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
       rUpdate.addToAddGroups(group.getGroupName());
     }
 
-    permsUpdater.handleUpdateNotification(update);
     LOGGER.debug("Authz Perm preUpdate [" + update.getSeqNum() + ", " + request.getRoleName() + "]..");
     return new DeltaTransactionBlock(update);
   }
@@ -265,7 +225,6 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
       rUpdate.addToDelGroups(group.getGroupName());
     }
 
-    permsUpdater.handleUpdateNotification(update);
     LOGGER.debug("Authz Perm preUpdate [" + update.getSeqNum() + ", " + request.getRoleName() + "]..");
     return new DeltaTransactionBlock(update);
   }
@@ -301,7 +260,6 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
     update.addPrivilegeUpdate(authzObj).putToAddPrivileges(
         roleName, privilege.getAction().toUpperCase());
 
-    permsUpdater.handleUpdateNotification(update);
     LOGGER.debug("Authz Perm preUpdate [" + update.getSeqNum() + "]..");
     return update;
   }
@@ -316,7 +274,6 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
     privUpdate.putToAddPrivileges(newAuthz, newAuthz);
     privUpdate.putToDelPrivileges(oldAuthz, oldAuthz);
 
-    permsUpdater.handleUpdateNotification(update);
     LOGGER.debug("Authz Perm preUpdate [" + update.getSeqNum() + ", " + newAuthz + ", " + oldAuthz + "]..");
     return new DeltaTransactionBlock(update);
   }
@@ -342,14 +299,6 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
     }
   }
 
-  public boolean isOutOfSync() {
-    return outOfSync;
-  }
-
-  public void setOutOfSync(boolean outOfSync) {
-    this.outOfSync = outOfSync;
-  }
-
   private PermissionsUpdate onAlterSentryRoleRevokePrivilegeCore(String roleName, TSentryPrivilege privilege)
       throws SentryPluginException {
     String authzObj = getAuthzObj(privilege);
@@ -361,7 +310,6 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
     update.addPrivilegeUpdate(authzObj).putToDelPrivileges(
         roleName, privilege.getAction().toUpperCase());
 
-    permsUpdater.handleUpdateNotification(update);
     LOGGER.debug("Authz Perm preUpdate [" + update.getSeqNum() + ", " + authzObj + "]..");
     return update;
   }
@@ -374,7 +322,6 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
         request.getRoleName(), PermissionsUpdate.ALL_AUTHZ_OBJ);
     update.addRoleUpdate(request.getRoleName()).addToDelGroups(PermissionsUpdate.ALL_GROUPS);
 
-    permsUpdater.handleUpdateNotification(update);
     LOGGER.debug("Authz Perm preUpdate [" + update.getSeqNum() + ", " + request.getRoleName() + "]..");
     return new DeltaTransactionBlock(update);
   }
@@ -387,7 +334,6 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
     update.addPrivilegeUpdate(authzObj).putToDelPrivileges(
         PermissionsUpdate.ALL_ROLES, PermissionsUpdate.ALL_ROLES);
 
-    permsUpdater.handleUpdateNotification(update);
     LOGGER.debug("Authz Perm preUpdate [" + update.getSeqNum() + ", " + authzObj + "]..");
     return new DeltaTransactionBlock(update);
   }
@@ -396,7 +342,6 @@ public class SentryPlugin implements SentryPolicyStorePlugin, SigUtils.SigListen
   public void onSignal(final String sigName) {
     LOGGER.info("SIGNAL HANDLING: Received signal " + sigName + ", triggering full update");
     fullUpdateHMS.set(true);
-    fullUpdateHMSWait.set(true);
     fullUpdateNN.set(true);
   }
 

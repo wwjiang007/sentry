@@ -18,13 +18,14 @@
 package org.apache.sentry.hdfs;
 
 import com.codahale.metrics.Timer;
+import com.google.common.collect.Lists;
 import org.apache.sentry.hdfs.service.thrift.TPathChanges;
 import org.apache.sentry.provider.db.service.persistent.PathsImage;
 import org.apache.sentry.provider.db.service.persistent.SentryStore;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class PathImageRetriever implements ImageRetriever<PathsUpdate> {
 
@@ -35,7 +36,7 @@ public class PathImageRetriever implements ImageRetriever<PathsUpdate> {
   }
 
   @Override
-  public PathsUpdate retrieveFullImage(long seqNum) throws Exception {
+  public PathsUpdate retrieveFullImage() throws Exception {
     try (final Timer.Context timerContext =
         SentryHdfsMetricsUtil.getRetrievePathFullImageTimer.time()) {
 
@@ -48,7 +49,7 @@ public class PathImageRetriever implements ImageRetriever<PathsUpdate> {
 
       // Generate a corresponding PathsUpdate.
       // TODO: use curSeqNum from DB instead of seqNum when doing SENTRY-1567
-      PathsUpdate pathsUpdate = new PathsUpdate(seqNum, true);
+      PathsUpdate pathsUpdate = new PathsUpdate(curSeqNum, true);
       for (Map.Entry<String, Set<String>> pathEnt : pathImage.entrySet()) {
         TPathChanges pathChange = pathsUpdate.newPathChange(pathEnt.getKey());
 
@@ -59,6 +60,12 @@ public class PathImageRetriever implements ImageRetriever<PathsUpdate> {
 
       SentryHdfsMetricsUtil.getPathChangesHistogram.update(pathsUpdate
             .getPathChanges().size());
+
+      UpdateableAuthzPaths authzPaths = new UpdateableAuthzPaths(
+          new String[]{"/"});
+      authzPaths.updatePartial(Lists.newArrayList(pathsUpdate),
+          new ReentrantReadWriteLock());
+      pathsUpdate.toThrift().setPathsDump(authzPaths.getPathsDump().createPathsDump());
       return pathsUpdate;
     }
   }
