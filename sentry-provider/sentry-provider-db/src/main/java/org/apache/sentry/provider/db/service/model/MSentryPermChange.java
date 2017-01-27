@@ -61,22 +61,13 @@ public class MSentryPermChange {
   private String permChange;
   private long createTimeMs;
 
-  public MSentryPermChange(long changeID, String permChange, long createTimeMs) {
-    this.changeID = changeID;
+  public MSentryPermChange(String permChange) {
     this.permChange = permChange;
-    this.createTimeMs = createTimeMs;
-  }
-
-  public void setCreateTimeMs(long createTimeMs) {
-    this.createTimeMs = createTimeMs;
+    this.createTimeMs = System.currentTimeMillis();
   }
 
   public long getCreateTimeMs() {
     return createTimeMs;
-  }
-
-  public void setPermChange(String permChange) {
-    this.permChange = permChange;
   }
 
   public String getPermChange() {
@@ -87,13 +78,10 @@ public class MSentryPermChange {
     return changeID;
   }
 
-  public void setChangeID(long changeID) {
-    this.changeID = changeID;
-  }
-
   @Override
   public String toString() {
-    return "MSentryPermChange [changeID=" + changeID + ", permChange= " + permChange + ", createTimeMs=" + createTimeMs +  "]";
+    return "MSentryPermChange [changeID=" + changeID + ", permChange= " + permChange +
+        ", createTimeMs=" + createTimeMs +  "]";
   }
 
   @Override
@@ -128,10 +116,10 @@ public class MSentryPermChange {
       return false;
     }
 
-    if (!permChange.equals(other.permChange)) {
-      return false;
+    if (permChange == null) {
+      return other.permChange == null;
     }
 
-    return true;
+    return permChange.equals(other.permChange);
   }
 }

@@ -20,6 +20,7 @@ package org.apache.sentry.provider.db.service.thrift;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -46,6 +47,7 @@ import org.apache.sentry.provider.db.log.entity.JsonLogEntity;
 import org.apache.sentry.provider.db.log.entity.JsonLogEntityFactory;
 import org.apache.sentry.provider.db.log.util.Constants;
 import org.apache.sentry.provider.db.service.persistent.SentryStore;
+import org.apache.sentry.provider.db.service.persistent.DeltaTransactionBlock;
 import org.apache.sentry.provider.db.service.thrift.PolicyStoreConstants.PolicyStoreServerConfig;
 import org.apache.sentry.service.thrift.SentryServiceUtil;
 import org.apache.sentry.service.thrift.ServiceConstants;
@@ -73,8 +75,6 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
   private static final Logger AUDIT_LOGGER = LoggerFactory.getLogger(Constants.AUDIT_LOGGER_NAME);
 
   public static final String SENTRY_POLICY_SERVICE_NAME = "SentryPolicyService";
-
-  public static volatile SentryPolicyStoreProcessor instance;
 
   private final String name;
   private final Configuration conf;
@@ -108,9 +108,6 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       SentryPolicyStorePlugin plugin = (SentryPolicyStorePlugin)clazz.newInstance();
       plugin.initialize(conf, sentryStore);
       sentryPlugins.add(plugin);
-    }
-    if (instance == null) {
-      instance = this;
     }
     initMetrics();
   }
@@ -244,8 +241,17 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       if (request.isSetPrivilege()) {
         request.setPrivileges(Sets.newHashSet(request.getPrivilege()));
       }
+
+      // TODO: now only has SentryPlugin. Once add more SentryPolicyStorePlugins,
+      // TODO: need to differentiate the updates for different Plugins.
+      Preconditions.checkState(sentryPlugins.size() <= 1);
+      Map<TSentryPrivilege, DeltaTransactionBlock> privilegesUpdateMap = new HashMap<>();
+      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
+        plugin.onAlterSentryRoleGrantPrivilege(request, privilegesUpdateMap);
+      }
+
       sentryStore.alterSentryRoleGrantPrivileges(request.getRequestorUserName(),
-          request.getRoleName(), request.getPrivileges());
+              request.getRoleName(), request.getPrivileges(), privilegesUpdateMap);
       response.setStatus(Status.OK());
       response.setPrivileges(request.getPrivileges());
       // Maintain compatibility for old API: Set privilege field to response
@@ -254,9 +260,6 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       }
       notificationHandlerInvoker.alter_sentry_role_grant_privilege(request,
               response);
-      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
-        plugin.onAlterSentryRoleGrantPrivilege(request);
-      }
     } catch (SentryNoSuchObjectException e) {
       String msg = "Role: " + request.getRoleName() + " doesn't exist";
       LOGGER.error(msg, e);
@@ -308,14 +311,20 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       if (request.isSetPrivilege()) {
         request.setPrivileges(Sets.newHashSet(request.getPrivilege()));
       }
+
+      // TODO: now only has SentryPlugin. Once add more SentryPolicyStorePlugins,
+      // TODO: need to differentiate the updates for different Plugins.
+      Preconditions.checkState(sentryPlugins.size() <= 1);
+      Map<TSentryPrivilege, DeltaTransactionBlock> privilegesUpdateMap = new HashMap<> ();
+      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
+        plugin.onAlterSentryRoleRevokePrivilege(request, privilegesUpdateMap);
+      }
+
       sentryStore.alterSentryRoleRevokePrivileges(request.getRequestorUserName(),
-          request.getRoleName(), request.getPrivileges());
+              request.getRoleName(), request.getPrivileges(), privilegesUpdateMap);
       response.setStatus(Status.OK());
       notificationHandlerInvoker.alter_sentry_role_revoke_privilege(request,
               response);
-      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
-        plugin.onAlterSentryRoleRevokePrivilege(request);
-      }
     } catch (SentryNoSuchObjectException e) {
       StringBuilder msg = new StringBuilder();
       if (request.getPrivileges().size() > 0) {
@@ -378,12 +387,18 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       validateClientVersion(request.getProtocol_version());
       authorize(request.getRequestorUserName(),
           getRequestorGroups(request.getRequestorUserName()));
-      sentryStore.dropSentryRole(request.getRoleName());
+
+      // TODO: now only has SentryPlugin. Once add more SentryPolicyStorePlugins,
+      // TODO: need to differentiate the updates for different Plugins.
+      Preconditions.checkState(sentryPlugins.size() <= 1);
+      DeltaTransactionBlock deltaTransactionBlock = null;
+      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
+        deltaTransactionBlock = plugin.onDropSentryRole(request);
+      }
+
+      sentryStore.dropSentryRole(request.getRoleName(), deltaTransactionBlock);
       response.setStatus(Status.OK());
       notificationHandlerInvoker.drop_sentry_role(request, response);
-      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
-        plugin.onDropSentryRole(request);
-      }
     } catch (SentryNoSuchObjectException e) {
       String msg = "Role :" + request + " doesn't exist";
       LOGGER.error(msg, e);
@@ -422,15 +437,21 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       validateClientVersion(request.getProtocol_version());
       authorize(request.getRequestorUserName(),
           getRequestorGroups(request.getRequestorUserName()));
+
+      // TODO: now only has SentryPlugin. Once add more SentryPolicyStorePlugins,
+      // TODO: need to differentiate the updates for different Plugins.
+      Preconditions.checkState(sentryPlugins.size() <= 1);
+      DeltaTransactionBlock deltaTransactionBlock = null;
+      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
+        deltaTransactionBlock = plugin.onAlterSentryRoleAddGroups(request);
+      }
+
       sentryStore.alterSentryRoleAddGroups(
           request.getRequestorUserName(), request.getRoleName(),
-          request.getGroups());
+          request.getGroups(), deltaTransactionBlock);
       response.setStatus(Status.OK());
       notificationHandlerInvoker.alter_sentry_role_add_groups(request,
-              response);
-      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
-        plugin.onAlterSentryRoleAddGroups(request);
-      }
+          response);
     } catch (SentryNoSuchObjectException e) {
       String msg = "Role: " + request + " doesn't exist";
       LOGGER.error(msg, e);
@@ -550,14 +571,20 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       validateClientVersion(request.getProtocol_version());
       authorize(request.getRequestorUserName(),
           getRequestorGroups(request.getRequestorUserName()));
+
+      // TODO: now only has SentryPlugin. Once add more SentryPolicyStorePlugins,
+      // TODO: need to differentiate the updates for different Plugins.
+      Preconditions.checkState(sentryPlugins.size() <= 1);
+      DeltaTransactionBlock deltaTransactionBlock = null;
+      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
+        deltaTransactionBlock = plugin.onAlterSentryRoleDeleteGroups(request);
+      }
+
       sentryStore.alterSentryRoleDeleteGroups(request.getRoleName(),
-              request.getGroups());
+          request.getGroups(), deltaTransactionBlock);
       response.setStatus(Status.OK());
       notificationHandlerInvoker.alter_sentry_role_delete_groups(request,
-              response);
-      for (SentryPolicyStorePlugin plugin : sentryPlugins) {
-        plugin.onAlterSentryRoleDeleteGroups(request);
-      }
+          response);
     } catch (SentryNoSuchObjectException e) {
       String msg = "Role: " + request + " does not exist.";
       LOGGER.error(msg, e);
@@ -829,10 +856,16 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
     try {
       validateClientVersion(request.getProtocol_version());
       authorize(request.getRequestorUserName(), adminGroups);
-      sentryStore.dropPrivilege(request.getAuthorizable());
+
+      // TODO: now only has SentryPlugin. Once add more SentryPolicyStorePlugins,
+      // TODO: need to differentiate the updates for different Plugins.
+      Preconditions.checkState(sentryPlugins.size() <= 1);
+      DeltaTransactionBlock deltaTransactionBlock = null;
       for (SentryPolicyStorePlugin plugin : sentryPlugins) {
-        plugin.onDropSentryPrivilege(request);
+        deltaTransactionBlock = plugin.onDropSentryPrivilege(request);
       }
+
+      sentryStore.dropPrivilege(request.getAuthorizable(), deltaTransactionBlock);
       response.setStatus(Status.OK());
     } catch (SentryAccessDeniedException e) {
       LOGGER.error(e.getMessage(), e);
@@ -859,11 +892,17 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
     try {
       validateClientVersion(request.getProtocol_version());
       authorize(request.getRequestorUserName(), adminGroups);
-      sentryStore.renamePrivilege(request.getOldAuthorizable(),
-          request.getNewAuthorizable());
+
+      // TODO: now only has SentryPlugin. Once add more SentryPolicyStorePlugins,
+      // TODO: need to differentiate the updates for different Plugins.
+      Preconditions.checkState(sentryPlugins.size() <= 1);
+      DeltaTransactionBlock deltaTransactionBlock = null;
       for (SentryPolicyStorePlugin plugin : sentryPlugins) {
-        plugin.onRenameSentryPrivilege(request);
+        deltaTransactionBlock = plugin.onRenameSentryPrivilege(request);
       }
+
+      sentryStore.renamePrivilege(request.getOldAuthorizable(),
+          request.getNewAuthorizable(), deltaTransactionBlock);
       response.setStatus(Status.OK());
     } catch (SentryAccessDeniedException e) {
       LOGGER.error(e.getMessage(), e);

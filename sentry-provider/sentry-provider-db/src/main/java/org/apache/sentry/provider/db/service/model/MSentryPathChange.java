@@ -63,22 +63,13 @@ public class MSentryPathChange {
   private String pathChange;
   private long createTimeMs;
 
-  public MSentryPathChange(long changeID, String pathChange, long createTime) {
-    this.changeID = changeID;
+  public MSentryPathChange(String pathChange) {
     this.pathChange = pathChange;
-    this.createTimeMs = createTime;
-  }
-
-  public void setCreateTimeMs(long createTimeMs) {
-    this.createTimeMs = createTimeMs;
+    this.createTimeMs = System.currentTimeMillis();
   }
 
   public long getCreateTimeMs() {
     return createTimeMs;
-  }
-
-  public void setPathChange(String pathChange) {
-    this.pathChange = pathChange;
   }
 
   public String getPathChange() {
@@ -89,13 +80,10 @@ public class MSentryPathChange {
     return changeID;
   }
 
-  public void setChangeID(long changeID) {
-    this.changeID = changeID;
-  }
-
   @Override
   public String toString() {
-    return "MSentryChange [changeID=" + changeID + " , pathChange= " + pathChange + ", createTime=" + createTimeMs +  "]";
+    return "MSentryChange [changeID=" + changeID + " , pathChange= " + pathChange +
+        ", createTime=" + createTimeMs +  "]";
   }
 
   @Override
@@ -126,14 +114,14 @@ public class MSentryPathChange {
       return false;
     }
 
-    if (!pathChange.equals(other.pathChange)) {
-      return false;
-    }
-
     if (createTimeMs != other.createTimeMs) {
       return false;
     }
 
-    return true;
+    if (pathChange == null) {
+      return other.pathChange == null;
+    }
+
+    return pathChange.equals(other.pathChange);
   }
 }

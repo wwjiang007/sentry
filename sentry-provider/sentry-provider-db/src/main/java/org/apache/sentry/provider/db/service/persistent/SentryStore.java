@@ -100,6 +100,12 @@ public class SentryStore {
   public static final String GRANT_OPTION = "grantOption";
   public static final String ROLE_NAME = "roleName";
 
+  // Initial change ID for permission/path change. Auto increment
+  // is starting from 1.
+  public static final long INIT_CHANGE_ID = 1L;
+
+  private static final long EMPTY_CHANGE_ID = 0L;
+
   // For counters, representation of the "unknown value"
   private static final long COUNT_VALUE_UNKNOWN = -1;
 
@@ -426,43 +432,110 @@ public class SentryStore {
   }
 
   /**
-   * Grant privilege for a role
+   * Alter a given sentry role to grant a privilege.
+   *
    * @param grantorPrincipal User name
-   * @param roleName Role name
-   * @param privilege Privilege to grant
+   * @param roleName the given role name
+   * @param privilege the given privilege
    * @throws Exception
    */
-  void alterSentryRoleGrantPrivilege(String grantorPrincipal,
-      String roleName, TSentryPrivilege privilege) throws Exception {
-    alterSentryRoleGrantPrivileges(grantorPrincipal, roleName,
-            Sets.newHashSet(privilege));
+  void alterSentryRoleGrantPrivilege(final String grantorPrincipal,
+      final String roleName, final TSentryPrivilege privilege) throws Exception {
+
+    tm.executeTransactionWithRetry(
+      new TransactionBlock() {
+        public Object execute(PersistenceManager pm) throws Exception {
+          String trimmedRoleName = trimAndLower(roleName);
+          // first do grant check
+          grantOptionCheck(pm, grantorPrincipal, privilege);
+
+          // Alter sentry Role and grant Privilege.
+          MSentryPrivilege mPrivilege = alterSentryRoleGrantPrivilegeCore(
+            pm, trimmedRoleName, privilege);
+
+          if (mPrivilege != null) {
+            // update the privilege to be the one actually updated.
+            convertToTSentryPrivilege(mPrivilege, privilege);
+          }
+          return null;
+        }
+      });
   }
 
   /**
-   * Grant multiple privileges
+   * Alter a given sentry role to grant a set of privileges.
+   * Internally calls alterSentryRoleGrantPrivilege.
+   *
    * @param grantorPrincipal User name
    * @param roleName Role name
    * @param privileges Set of privileges
    * @throws Exception
    */
-  public void alterSentryRoleGrantPrivileges(final String grantorPrincipal,
+  void alterSentryRoleGrantPrivileges(final String grantorPrincipal,
       final String roleName, final Set<TSentryPrivilege> privileges) throws Exception {
-    tm.executeTransactionWithRetry(
-        new TransactionBlock() {
-          public Object execute(PersistenceManager pm) throws Exception {
-            String trimmedRoleName = trimAndLower(roleName);
-            for (TSentryPrivilege privilege : privileges) {
-              // first do grant check
-              grantOptionCheck(pm, grantorPrincipal, privilege);
-              MSentryPrivilege mPrivilege = alterSentryRoleGrantPrivilegeCore(
-                  pm, trimmedRoleName, privilege);
-              if (mPrivilege != null) {
-                convertToTSentryPrivilege(mPrivilege, privilege);
-              }
-            }
-            return null;
-          }
-        });
+    for (TSentryPrivilege privilege : privileges) {
+      alterSentryRoleGrantPrivilege(grantorPrincipal, roleName, privilege);
+    }
+  }
+
+  /**
+   * Alter a given sentry role to grant a privilege, as well as persist the corresponding
+   * permission change to MSentryPermChange table in a single transaction.
+   *
+   * @param grantorPrincipal User name
+   * @param roleName the given role name
+   * @param privilege the given privilege
+   * @param deltaTransactionBlock the corresponding permission delta update transaction block
+   * @throws Exception
+   *
+   */
+  void alterSentryRoleGrantPrivilege(final String grantorPrincipal,
+      final String roleName, final TSentryPrivilege privilege,
+      final DeltaTransactionBlock deltaTransactionBlock) throws Exception {
+
+    execute(deltaTransactionBlock, new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+        String trimmedRoleName = trimAndLower(roleName);
+        // first do grant check
+        grantOptionCheck(pm, grantorPrincipal, privilege);
+
+        // Alter sentry Role and grant Privilege.
+        MSentryPrivilege mPrivilege = alterSentryRoleGrantPrivilegeCore(pm,
+          trimmedRoleName, privilege);
+
+        if (mPrivilege != null) {
+          // update the privilege to be the one actually updated.
+          convertToTSentryPrivilege(mPrivilege, privilege);
+        }
+        return null;
+      }
+    });
+  }
+
+  /**
+   * Alter a given sentry role to grant a set of privileges, as well as persist the
+   * corresponding permission change to MSentryPermChange table in a single transaction.
+   * Internally calls alterSentryRoleGrantPrivilege.
+   *
+   * @param grantorPrincipal User name
+   * @param roleName the given role name
+   * @param privileges a Set of privileges
+   * @param privilegesUpdateMap the corresponding <privilege, DeltaTransactionBlock> map
+   * @throws Exception
+   *
+   */
+  public void alterSentryRoleGrantPrivileges(final String grantorPrincipal,
+      final String roleName, final Set<TSentryPrivilege> privileges,
+      final Map<TSentryPrivilege, DeltaTransactionBlock> privilegesUpdateMap) throws Exception {
+
+    for (TSentryPrivilege privilege : privileges) {
+      DeltaTransactionBlock deltaTransactionBlock = null;
+      if (privilegesUpdateMap != null) {
+        deltaTransactionBlock = privilegesUpdateMap.get(privilege);
+      }
+      alterSentryRoleGrantPrivilege(grantorPrincipal, roleName, privilege,
+          deltaTransactionBlock);
+    }
   }
 
   private MSentryPrivilege alterSentryRoleGrantPrivilegeCore(PersistenceManager pm,
@@ -522,27 +595,99 @@ public class SentryStore {
     return mPrivilege;
   }
 
-  void alterSentryRoleRevokePrivilege(String grantorPrincipal,
-      String roleName, TSentryPrivilege tPrivilege) throws Exception {
-    alterSentryRoleRevokePrivileges(grantorPrincipal, roleName,
-            Sets.newHashSet(tPrivilege));
+  /**
+  * Alter a given sentry role to revoke a privilege.
+  *
+  * @param grantorPrincipal User name
+  * @param roleName the given role name
+  * @param tPrivilege the given privilege
+  * @throws Exception
+  *
+  */
+  void alterSentryRoleRevokePrivilege(final String grantorPrincipal,
+      final String roleName, final TSentryPrivilege tPrivilege) throws Exception {
+
+    tm.executeTransactionWithRetry(
+      new TransactionBlock() {
+        public Object execute(PersistenceManager pm) throws Exception {
+          String trimmedRoleName = safeTrimLower(roleName);
+          // first do revoke check
+          grantOptionCheck(pm, grantorPrincipal, tPrivilege);
+
+          alterSentryRoleRevokePrivilegeCore(pm, trimmedRoleName, tPrivilege);
+          return null;
+        }
+      });
   }
 
-  public void alterSentryRoleRevokePrivileges(final String grantorPrincipal,
+  /**
+   * Alter a given sentry role to revoke a set of privileges.
+   * Internally calls alterSentryRoleRevokePrivilege.
+   *
+   * @param grantorPrincipal User name
+   * @param roleName the given role name
+   * @param tPrivileges a Set of privileges
+   * @throws Exception
+   *
+   */
+  void alterSentryRoleRevokePrivileges(final String grantorPrincipal,
       final String roleName, final Set<TSentryPrivilege> tPrivileges) throws Exception {
-    tm.executeTransactionWithRetry(
-        new TransactionBlock() {
-          public Object execute(PersistenceManager pm) throws Exception {
-            String trimmedRoleName = safeTrimLower(roleName);
-            for (TSentryPrivilege tPrivilege : tPrivileges) {
-              // first do revoke check
-              grantOptionCheck(pm, grantorPrincipal, tPrivilege);
+    for (TSentryPrivilege tPrivilege : tPrivileges) {
+      alterSentryRoleRevokePrivilege(grantorPrincipal, roleName, tPrivilege);
+    }
+  }
 
-              alterSentryRoleRevokePrivilegeCore(pm, trimmedRoleName, tPrivilege);
-            }
-            return null;
-          }
-        });
+  /**
+   * Alter a given sentry role to revoke a privilege, as well as persist the corresponding
+   * permission change to MSentryPermChange table in a single transaction.
+   *
+   * @param grantorPrincipal User name
+   * @param roleName the given role name
+   * @param tPrivilege the given privilege
+   * @param deltaTransactionBlock the corresponding permission delta update transaction block
+   * @throws Exception
+   *
+   */
+  void alterSentryRoleRevokePrivilege(final String grantorPrincipal,
+      final String roleName, final TSentryPrivilege tPrivilege,
+      final DeltaTransactionBlock deltaTransactionBlock) throws Exception {
+    execute(deltaTransactionBlock, new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+        String trimmedRoleName = safeTrimLower(roleName);
+        // first do revoke check
+        grantOptionCheck(pm, grantorPrincipal, tPrivilege);
+
+        alterSentryRoleRevokePrivilegeCore(pm, trimmedRoleName, tPrivilege);
+        return null;
+      }
+    });
+  }
+
+  /**
+   * Alter a given sentry role to revoke a set of privileges, as well as persist the
+   * corresponding permission change to MSentryPermChange table in a single transaction.
+   * Internally calls alterSentryRoleRevokePrivilege.
+   *
+   * @param grantorPrincipal User name
+   * @param roleName the given role name
+   * @param tPrivileges a Set of privileges
+   * @param privilegesUpdateMap the corresponding <privilege, DeltaTransactionBlock> map
+   * @throws Exception
+   *
+   */
+  public void alterSentryRoleRevokePrivileges(final String grantorPrincipal,
+      final String roleName, final Set<TSentryPrivilege> tPrivileges,
+      final Map<TSentryPrivilege, DeltaTransactionBlock> privilegesUpdateMap)
+          throws Exception {
+
+    for (TSentryPrivilege tPrivilege : tPrivileges) {
+      DeltaTransactionBlock deltaTransactionBlock = null;
+      if (privilegesUpdateMap != null) {
+        deltaTransactionBlock = privilegesUpdateMap.get(tPrivilege);
+      }
+      alterSentryRoleRevokePrivilege(grantorPrincipal, roleName, tPrivilege,
+          deltaTransactionBlock);
+    }
   }
 
   private void alterSentryRoleRevokePrivilegeCore(PersistenceManager pm,
@@ -795,6 +940,12 @@ public class SentryStore {
     return (MSentryPrivilege)query.executeWithMap(paramBuilder.getArguments());
   }
 
+  /**
+   * Drop a given sentry role.
+   *
+   * @param roleName the given role name
+   * @throws Exception
+   */
   public void dropSentryRole(final String roleName) throws Exception {
     tm.executeTransactionWithRetry(
         new TransactionBlock() {
@@ -803,6 +954,25 @@ public class SentryStore {
             return null;
           }
         });
+  }
+
+  /**
+   * Drop a given sentry role. As well as persist the corresponding
+   * permission change to MSentryPermChange table in a single transaction.
+   *
+   * @param roleName the given role name
+   * @param deltaTransactionBlock the corresponding permission delta update transaction block
+   * @throws Exception
+   */
+  public void dropSentryRole(final String roleName,
+      final DeltaTransactionBlock deltaTransactionBlock) throws Exception {
+
+    execute(deltaTransactionBlock, new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+        dropSentryRoleCore(pm, roleName);
+        return null;
+      }
+    });
   }
 
   private void dropSentryRoleCore(PersistenceManager pm, String roleName)
@@ -820,7 +990,15 @@ public class SentryStore {
     pm.deletePersistent(sentryRole);
   }
 
-  public void alterSentryRoleAddGroups(final String grantorPrincipal,
+  /**
+   * Assign a given role to a set of groups.
+   *
+   * @param grantorPrincipal grantorPrincipal currently is not used.
+   * @param roleName the role to be assigned to the groups.
+   * @param groupNames the list of groups to be added to the role,
+   * @throws Exception
+   */
+  void alterSentryRoleAddGroups(final String grantorPrincipal,
       final String roleName, final Set<TSentryGroup> groupNames) throws Exception {
     tm.executeTransactionWithRetry(
         new TransactionBlock() {
@@ -831,13 +1009,39 @@ public class SentryStore {
         });
   }
 
+  /**
+   * Assign a given role to a set of groups. As well as persist the corresponding
+   * permission change to MSentryPermChange table in a single transaction.
+   *
+   * @param grantorPrincipal grantorPrincipal currently is not used.
+   * @param roleName the role to be assigned to the groups.
+   * @param groupNames the list of groups to be added to the role,
+   * @param deltaTransactionBlock the corresponding permission delta update transaction block
+   * @throws Exception
+   */
+  public void alterSentryRoleAddGroups(final String grantorPrincipal,
+      final String roleName, final Set<TSentryGroup> groupNames,
+      final DeltaTransactionBlock deltaTransactionBlock) throws Exception {
+
+    execute(deltaTransactionBlock, new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+        alterSentryRoleAddGroupsCore(pm, roleName, groupNames);
+        return null;
+      }
+    });
+  }
+
   private void alterSentryRoleAddGroupsCore(PersistenceManager pm, String roleName,
       Set<TSentryGroup> groupNames) throws SentryNoSuchObjectException {
+
+    // All role names are stored in lowercase.
     String lRoleName = trimAndLower(roleName);
     MSentryRole role = getRole(pm, lRoleName);
     if (role == null) {
       throw noSuchRole(lRoleName);
     }
+
+    // Add the group to the specified role if it does not belong to the role yet.
     Query query = pm.newQuery(MSentryGroup.class);
     query.setFilter("this.groupName == :groupName");
     query.setUnique(true);
@@ -917,7 +1121,14 @@ public class SentryStore {
         });
   }
 
-  public void alterSentryRoleDeleteGroups(final String roleName,
+  /**
+   * Revoke a given role to a set of groups.
+   *
+   * @param roleName the role to be assigned to the groups.
+   * @param groupNames the list of groups to be added to the role,
+   * @throws Exception
+   */
+  void alterSentryRoleDeleteGroups(final String roleName,
       final Set<TSentryGroup> groupNames) throws Exception {
     tm.executeTransactionWithRetry(
         new TransactionBlock() {
@@ -943,6 +1154,45 @@ public class SentryStore {
             return null;
           }
         });
+  }
+
+  /**
+   * Revoke a given role to a set of groups. As well as persist the corresponding
+   * permission change to MSentryPermChange table in a single transaction.
+   *
+   * @param roleName the role to be assigned to the groups.
+   * @param groupNames the list of groups to be added to the role,
+   * @param deltaTransactionBlock the corresponding permission delta update transaction block
+   * @throws Exception
+   */
+  public void alterSentryRoleDeleteGroups(final String roleName,
+      final Set<TSentryGroup> groupNames, final DeltaTransactionBlock deltaTransactionBlock)
+          throws Exception {
+    execute(deltaTransactionBlock, new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+        String trimmedRoleName = trimAndLower(roleName);
+        MSentryRole role = getRole(pm, trimmedRoleName);
+        if (role == null) {
+          throw noSuchRole(trimmedRoleName);
+        }
+
+        // Remove the group from the specified role if it belongs to the role.
+        Query query = pm.newQuery(MSentryGroup.class);
+        query.setFilter("this.groupName == :groupName");
+        query.setUnique(true);
+        List<MSentryGroup> groups = Lists.newArrayList();
+        for (TSentryGroup tGroup : groupNames) {
+          String groupName = tGroup.getGroupName().trim();
+          MSentryGroup group = (MSentryGroup) query.execute(groupName);
+          if (group != null) {
+            group.removeRole(role);
+            groups.add(group);
+          }
+        }
+        pm.makePersistentAll(groups);
+        return null;
+      }
+    });
   }
 
   @VisibleForTesting
@@ -1545,14 +1795,19 @@ public class SentryStore {
   }
 
   /**
-   * Drop given privilege from all roles
+   * Drop the given privilege from all roles.
+   *
+   * @param tAuthorizable the given authorizable object.
+   * @throws Exception
    */
-  public void dropPrivilege(final TSentryAuthorizable tAuthorizable) throws Exception {
+  void dropPrivilege(final TSentryAuthorizable tAuthorizable) throws Exception {
     tm.executeTransactionWithRetry(
         new TransactionBlock() {
           public Object execute(PersistenceManager pm) throws Exception {
 
+            // Drop the give privilege for all possible actions from all roles.
             TSentryPrivilege tPrivilege = toSentryPrivilege(tAuthorizable);
+
             try {
               if (isMultiActionsSupported(tPrivilege)) {
                 for (String privilegeAction : ALL_ACTIONS) {
@@ -1572,20 +1827,58 @@ public class SentryStore {
   }
 
   /**
-   * Rename given privilege from all roles drop the old privilege and create the new one
-   * @param tAuthorizable
-   * @param newTAuthorizable
+   * Drop the given privilege from all roles. As well as persist the corresponding
+   * permission change to MSentryPermChange table in a single transaction.
+   *
+   * @param tAuthorizable the given authorizable object.
+   * @param deltaTransactionBlock the corresponding permission delta update transaction block.
+   * @throws Exception
+   */
+  public void dropPrivilege(final TSentryAuthorizable tAuthorizable,
+      final DeltaTransactionBlock deltaTransactionBlock) throws Exception {
+
+    execute(deltaTransactionBlock, new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+
+        // Drop the give privilege for all possible actions from all roles.
+        TSentryPrivilege tPrivilege = toSentryPrivilege(tAuthorizable);
+
+        try {
+          if (isMultiActionsSupported(tPrivilege)) {
+            for (String privilegeAction : ALL_ACTIONS) {
+              tPrivilege.setAction(privilegeAction);
+              dropPrivilegeForAllRoles(pm, new TSentryPrivilege(tPrivilege));
+            }
+          } else {
+            dropPrivilegeForAllRoles(pm, new TSentryPrivilege(tPrivilege));
+          }
+        } catch (JDODataStoreException e) {
+          throw new SentryInvalidInputException("Failed to get privileges: "
+          + e.getMessage());
+        }
+        return null;
+      }
+    });
+  }
+
+  /**
+   * Rename the privilege for all roles. Drop the old privilege name and create the new one.
+   *
+   * @param oldTAuthorizable the old authorizable name needs to be renamed.
+   * @param newTAuthorizable the new authorizable name
    * @throws SentryNoSuchObjectException
    * @throws SentryInvalidInputException
    */
-  public void renamePrivilege(final TSentryAuthorizable tAuthorizable,
+  void renamePrivilege(final TSentryAuthorizable oldTAuthorizable,
       final TSentryAuthorizable newTAuthorizable) throws Exception {
     tm.executeTransactionWithRetry(
         new TransactionBlock() {
           public Object execute(PersistenceManager pm) throws Exception {
 
-            TSentryPrivilege tPrivilege = toSentryPrivilege(tAuthorizable);
+            // Drop the give privilege for all possible actions from all roles.
+            TSentryPrivilege tPrivilege = toSentryPrivilege(oldTAuthorizable);
             TSentryPrivilege newPrivilege = toSentryPrivilege(newTAuthorizable);
+
             try {
               // In case of tables or DBs, check all actions
               if (isMultiActionsSupported(tPrivilege)) {
@@ -1604,6 +1897,48 @@ public class SentryStore {
             return null;
           }
         });
+  }
+
+  /**
+   * Rename the privilege for all roles. Drop the old privilege name and create the new one.
+   * As well as persist the corresponding permission change to MSentryPermChange table in a
+   * single transaction.
+   *
+   * @param oldTAuthorizable the old authorizable name needs to be renamed.
+   * @param newTAuthorizable the new authorizable name
+   * @param deltaTransactionBlock the corresponding permission delta update transaction block
+   * @throws SentryNoSuchObjectException
+   * @throws SentryInvalidInputException
+   */
+  public void renamePrivilege(final TSentryAuthorizable oldTAuthorizable,
+      final TSentryAuthorizable newTAuthorizable, final DeltaTransactionBlock deltaTransactionBlock)
+        throws Exception {
+
+    execute(deltaTransactionBlock, new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+
+        // Drop the give privilege for all possible actions from all roles.
+        TSentryPrivilege tPrivilege = toSentryPrivilege(oldTAuthorizable);
+        TSentryPrivilege newPrivilege = toSentryPrivilege(newTAuthorizable);
+
+        try {
+          // In case of tables or DBs, check all actions
+          if (isMultiActionsSupported(tPrivilege)) {
+            for (String privilegeAction : ALL_ACTIONS) {
+              tPrivilege.setAction(privilegeAction);
+              newPrivilege.setAction(privilegeAction);
+              renamePrivilegeForAllRoles(pm, tPrivilege, newPrivilege);
+            }
+          } else {
+            renamePrivilegeForAllRoles(pm, tPrivilege, newPrivilege);
+          }
+        } catch (JDODataStoreException e) {
+          throw new SentryInvalidInputException("Failed to get privileges: "
+          + e.getMessage());
+        }
+        return null;
+      }
+    });
   }
 
   // Currently INSERT/SELECT/ALL are supported for Table and DB level privileges
@@ -2620,6 +2955,15 @@ public class SentryStore {
   }
 
   /**
+   * Return exception for nonexistent update
+   * @param changeID change ID
+   * @return SentryNoSuchObjectException with appropriate message
+   */
+  private SentryNoSuchObjectException noSuchUpdate(final long changeID) {
+    return new SentryNoSuchObjectException("nonexistent update + " + changeID);
+  }
+
+  /**
    * Add common filter for set of roles
    * @param query Query used for search
    * @param paramBuilder paramBuilder for parameters
@@ -2925,5 +3269,108 @@ public class SentryStore {
       queryParts.add("this." + fieldName + " == :" + fieldName);
       return this;
     }
+  }
+
+  /**
+   * Get the last processed perm change ID.
+   *
+   * @param pm the PersistenceManager
+   * @return the last processed perm changedID
+   */
+  private long getLastProcessedPermChangeIDCore(PersistenceManager pm) {
+    Query query = pm.newQuery(MSentryPermChange.class);
+    query.setResult("max(this.changeID)");
+    Long changeID = (Long) query.execute();
+    if (changeID == null) {
+      return EMPTY_CHANGE_ID;
+    } else {
+      return changeID;
+    }
+  }
+
+  /**
+   * Get the MSentryPermChange object by ChangeID. Internally invoke
+   * getLastProcessedPermChangeIDCore().
+   *
+   * @return MSentryPermChange
+   */
+  @VisibleForTesting
+  long getLastProcessedPermChangeID() throws Exception {
+    return tm.executeTransaction(
+      new TransactionBlock<Long>() {
+        public Long execute(PersistenceManager pm) throws Exception {
+          return getLastProcessedPermChangeIDCore(pm);
+        }
+      });
+  }
+
+  /**
+   * Get the MSentryPermChange object by ChangeID.
+   *
+   * @param changeID the given changeID.
+   * @return MSentryPermChange
+   */
+  public MSentryPermChange getMSentryPermChangeByID(final long changeID) throws Exception {
+    return (MSentryPermChange) tm.executeTransaction(
+      new TransactionBlock() {
+        public Object execute(PersistenceManager pm) throws Exception {
+          Query query = pm.newQuery(MSentryPermChange.class);
+          query.setFilter("this.changeID == t");
+          query.declareParameters("long t");
+          List<MSentryPermChange> permChanges = (List<MSentryPermChange>)query.execute(changeID);
+          if (permChanges == null) {
+            noSuchUpdate(changeID);
+          } else if (permChanges.size() > 1) {
+            throw new Exception("Each change ID should only corresponds to one perm change!");
+          }
+
+          return permChanges.get(0);
+        }
+      });
+  }
+
+  /**
+   * Get the MSentryPathChange object by ChangeID.
+   */
+  public MSentryPathChange getMSentryPathChangeByID(final long changeID) throws Exception {
+    return (MSentryPathChange) tm.executeTransaction(
+      new TransactionBlock() {
+        public Object execute(PersistenceManager pm) throws Exception {
+          Query query = pm.newQuery(MSentryPathChange.class);
+          query.setFilter("this.changeID == t");
+          query.declareParameters("long t");
+          List<MSentryPathChange> pathChanges = (List<MSentryPathChange>)query.execute(changeID);
+          if (pathChanges == null) {
+            noSuchUpdate(changeID);
+          } else if (pathChanges.size() > 1) {
+            throw new Exception("Each change ID should only corresponds to one path change!");
+          }
+
+          return pathChanges.get(0);
+        }
+      });
+  }
+
+  /**
+   * Execute Perm/Path UpdateTransaction and corresponding actual
+   * action transaction, e.g dropSentryRole, in a single transaction.
+   * The order of the transaction does not matter because there is no
+   * any return value.
+   * <p>
+   * Failure in any TransactionBlock would cause the whole transaction
+   * to fail.
+   *
+   * @param deltaTransactionBlock
+   * @param transactionBlock
+   * @throws Exception
+   */
+  private void execute(DeltaTransactionBlock deltaTransactionBlock,
+        TransactionBlock<Object> transactionBlock) throws Exception {
+    List<TransactionBlock<Object>> tbs = Lists.newArrayList();
+    if (deltaTransactionBlock != null) {
+      tbs.add(deltaTransactionBlock);
+    }
+    tbs.add(transactionBlock);
+    tm.executeTransactionBlocksWithRetry(tbs);
   }
 }

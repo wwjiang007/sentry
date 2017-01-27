@@ -504,7 +504,7 @@ public class TestSentryStoreImportExport {
     sentryStore.importSentryMetaData(tSentryMappingData1, false);
 
     // drop the role2, the group2 is orphaned group
-    sentryStore.dropSentryRole("role2");
+    sentryStore.dropSentryRole("role2", null);
 
     Map<String, MSentryRole> rolesMap = sentryStore.getRolesMap();
     Map<String, MSentryGroup> groupsMap = sentryStore.getGroupNameToGroupMap();

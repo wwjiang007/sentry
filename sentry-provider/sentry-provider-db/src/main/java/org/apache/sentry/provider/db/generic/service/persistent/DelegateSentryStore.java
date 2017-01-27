@@ -36,6 +36,7 @@ import org.apache.sentry.core.common.exception.SentryNoSuchObjectException;
 import org.apache.sentry.provider.db.service.model.MSentryGMPrivilege;
 import org.apache.sentry.provider.db.service.model.MSentryGroup;
 import org.apache.sentry.provider.db.service.model.MSentryRole;
+import org.apache.sentry.provider.db.service.persistent.DeltaTransactionBlock;
 import org.apache.sentry.provider.db.service.persistent.SentryStore;
 import org.apache.sentry.provider.db.service.persistent.TransactionBlock;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyStoreProcessor;
@@ -92,7 +93,10 @@ public class DelegateSentryStore implements SentryStoreLayer {
   @Override
   public Object dropRole(final String component, final String role, final String requestor)
       throws Exception {
-    delegate.dropSentryRole(toTrimmedLower(role));
+    // UpdateTransactionBlock is null for generic model. As we are
+    // only tracking permission update of Hive model for HDFS sync.
+    DeltaTransactionBlock deltaTransactionBlock = null;
+    delegate.dropSentryRole(toTrimmedLower(role), deltaTransactionBlock);
     return null;
   }
 
@@ -104,15 +108,22 @@ public class DelegateSentryStore implements SentryStoreLayer {
   @Override
   public Object alterRoleAddGroups(String component, String role,
       Set<String> groups, String requestor) throws Exception {
-    delegate.alterSentryRoleAddGroups(requestor, role, toTSentryGroups(groups));
+    // UpdateTransactionBlock is null for generic model. As we are
+    // only tracking permission update of Hive model for HDFS sync.
+    DeltaTransactionBlock deltaTransactionBlock = null;
+    delegate.alterSentryRoleAddGroups(requestor, role, toTSentryGroups(groups),
+        deltaTransactionBlock);
     return null;
   }
 
   @Override
   public Object alterRoleDeleteGroups(String component, String role,
       Set<String> groups, String requestor) throws Exception {
-  //called to old sentryStore
-    delegate.alterSentryRoleDeleteGroups(role, toTSentryGroups(groups));
+    // Called to old sentryStore. UpdateTransactionBlock is null for generic model.
+    // As we are only tracking permission update of Hive model for HDFS sync.
+    DeltaTransactionBlock deltaTransactionBlock = null;
+    delegate.alterSentryRoleDeleteGroups(role, toTSentryGroups(groups),
+        deltaTransactionBlock);
     return null;
   }
 
@@ -120,23 +131,21 @@ public class DelegateSentryStore implements SentryStoreLayer {
   public Object alterRoleGrantPrivilege(final String component, final String role,
       final PrivilegeObject privilege, final String grantorPrincipal)
       throws Exception {
-    delegate.getTransactionManager().executeTransactionWithRetry(
-        new TransactionBlock() {
-          public Object execute(PersistenceManager pm) throws Exception {
-            String trimmedRole = toTrimmedLower(role);
-            MSentryRole mRole = getRole(trimmedRole, pm);
-            if (mRole == null) {
-              throw new SentryNoSuchObjectException("Role: " + trimmedRole + " doesn't exist");
-            }
-            /*
-             * check with grant option
-             */
-            grantOptionCheck(privilege, grantorPrincipal, pm);
+    delegate.getTransactionManager().executeTransactionWithRetry(new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+        String trimmedRole = toTrimmedLower(role);
+        MSentryRole mRole = getRole(trimmedRole, pm);
+        if (mRole == null) {
+          throw new SentryNoSuchObjectException("Role: " + trimmedRole + " doesn't exist");
+        }
 
-            privilegeOperator.grantPrivilege(privilege, mRole, pm);
-            return null;
-          }
-        });
+        // check with grant option
+        grantOptionCheck(privilege, grantorPrincipal, pm);
+
+        privilegeOperator.grantPrivilege(privilege, mRole, pm);
+        return null;
+      }
+    });
     return null;
   }
 
@@ -144,23 +153,21 @@ public class DelegateSentryStore implements SentryStoreLayer {
   public Object alterRoleRevokePrivilege(final String component,
       final String role, final PrivilegeObject privilege, final String grantorPrincipal)
       throws Exception {
-    delegate.getTransactionManager().executeTransactionWithRetry(
-        new TransactionBlock() {
-          public Object execute(PersistenceManager pm) throws Exception {
-            String trimmedRole = toTrimmedLower(role);
-            MSentryRole mRole = getRole(trimmedRole, pm);
-            if (mRole == null) {
-              throw new SentryNoSuchObjectException("Role: " + trimmedRole + " doesn't exist");
-            }
-            /*
-             * check with grant option
-             */
-            grantOptionCheck(privilege, grantorPrincipal, pm);
+    delegate.getTransactionManager().executeTransactionWithRetry(new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+        String trimmedRole = toTrimmedLower(role);
+        MSentryRole mRole = getRole(trimmedRole, pm);
+        if (mRole == null) {
+          throw new SentryNoSuchObjectException("Role: " + trimmedRole + " doesn't exist");
+        }
 
-            privilegeOperator.revokePrivilege(privilege, mRole, pm);
-            return null;
-          }
-        });
+        // check with grant option
+        grantOptionCheck(privilege, grantorPrincipal, pm);
+
+        privilegeOperator.revokePrivilege(privilege, mRole, pm);
+        return null;
+      }
+    });
     return null;
   }
 
