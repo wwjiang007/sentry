@@ -49,6 +49,7 @@ import org.apache.sentry.core.common.exception.*;
 import org.apache.sentry.core.common.utils.SentryConstants;
 import org.apache.sentry.core.model.db.AccessConstants;
 import org.apache.sentry.core.model.db.DBModelAuthorizable.AuthorizableType;
+import org.apache.sentry.hdfs.Updateable;
 import org.apache.sentry.provider.db.service.model.*;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyStoreProcessor;
 import org.apache.sentry.provider.db.service.thrift.TSentryActiveRoleSet;
@@ -2155,99 +2156,148 @@ public class SentryStore {
         ServerConfig.ADMIN_GROUPS, new String[]{}));
   }
 
-  public Map<String, HashMap<String, String>> retrieveFullPrivilegeImage() throws Exception {
-    Map<String, HashMap<String, String>> result = new HashMap<>();
+  /**
+   * Retrieve an up-to-date snapshot of Permission image
+   * Internally calls retrieveFullPrivilegeImage and
+   * retrieveFullRoleImage.
+   *
+   * @return a Paths image contains mapping of Role -> [Privileges]
+   *         and mapping of Role -> [Groups]. For empty image
+   *         return EMPTY_CHANGE_ID and empty maps.
+   * @throws Exception
+   */
+  public PermissionsImage retrieveFullPermssionsImage() throws Exception {
     return tm.executeTransaction(
-      new TransactionBlock<Map<String, HashMap<String, String>>>() {
-        public Map<String, HashMap<String, String>> execute(PersistenceManager pm)
+      new TransactionBlock<PermissionsImage>() {
+        public PermissionsImage execute(PersistenceManager pm)
                 throws Exception {
-          Map<String, HashMap<String, String>> retVal = new HashMap<>();
-          Query query = pm.newQuery(MSentryPrivilege.class);
-          QueryParamBuilder paramBuilder = new QueryParamBuilder();
-          paramBuilder
-                  .addNotNull(SERVER_NAME)
-                  .addNotNull(DB_NAME)
-                  .addNull(URI);
+          long curChangeID = getLastProcessedPermChangeIDCore(pm);
+          Map<String, LinkedList<String>> roleImage = retrieveFullRoleImage(pm);
+          Map<String, HashMap<String, String>> privilegeMap = retrieveFullPrivilegeImage(pm);
 
-          query.setFilter(paramBuilder.toString());
-          query.setOrdering("serverName ascending, dbName ascending, tableName ascending");
-          @SuppressWarnings("unchecked")
-          List<MSentryPrivilege> privileges =
-                  (List<MSentryPrivilege>) query.executeWithMap(paramBuilder.getArguments());
-          for (MSentryPrivilege mPriv : privileges) {
-            String authzObj = mPriv.getDbName();
-            if (!isNULL(mPriv.getTableName())) {
-              authzObj = authzObj + "." + mPriv.getTableName();
-            }
-            HashMap<String, String> pUpdate = retVal.get(authzObj);
-            if (pUpdate == null) {
-              pUpdate = new HashMap<String, String>();
-              retVal.put(authzObj, pUpdate);
-            }
-            for (MSentryRole mRole : mPriv.getRoles()) {
-              String existingPriv = pUpdate.get(mRole.getRoleName());
-              if (existingPriv == null) {
-                pUpdate.put(mRole.getRoleName(), mPriv.getAction().toUpperCase());
-              } else {
-                pUpdate.put(mRole.getRoleName(), existingPriv + ","
-                        + mPriv.getAction().toUpperCase());
-              }
-            }
+          if (curChangeID == EMPTY_CHANGE_ID && (!roleImage.isEmpty()
+                  || !privilegeMap.isEmpty())) {
+            throw new Exception("Non-empty full permission image should not have" +
+                "an empty change ID.");
           }
-          return retVal;
+          return new PermissionsImage(roleImage, privilegeMap, curChangeID);
         }
       });
   }
 
   /**
-   * @return Mapping of Role -> [Groups]
+   * Retrieve an up-to-date snapshot of Role -> [Privileges]
+   *
+   * @param pm PersistenceManager
+   * @return Mapping of Role -> [Privileges]
+   * @throws Exception
    */
-  public Map<String, LinkedList<String>> retrieveFullRoleImage() throws Exception {
-    Map<String, LinkedList<String>> result = new HashMap<>();
-    return tm.executeTransaction(
-        new TransactionBlock<Map<String, LinkedList<String>>>() {
-          public Map<String, LinkedList<String>> execute(PersistenceManager pm) throws Exception {
-            Map<String, LinkedList<String>> retVal = new HashMap<>();
-            Query query = pm.newQuery(MSentryGroup.class);
-            @SuppressWarnings("unchecked")
-            List<MSentryGroup> groups = (List<MSentryGroup>) query.execute();
-            for (MSentryGroup mGroup : groups) {
-              for (MSentryRole role : mGroup.getRoles()) {
-                LinkedList<String> rUpdate = retVal.get(role.getRoleName());
-                if (rUpdate == null) {
-                  rUpdate = new LinkedList<String>();
-                  retVal.put(role.getRoleName(), rUpdate);
-                }
-                rUpdate.add(mGroup.getGroupName());
-              }
-            }
-            return retVal;
+  @SuppressWarnings("unchecked")
+  private Map<String, HashMap<String, String>> retrieveFullPrivilegeImage(PersistenceManager pm)
+              throws Exception {
+    Map<String, HashMap<String, String>> retVal = new HashMap<>();
+    Query query = pm.newQuery(MSentryPrivilege.class);
+    QueryParamBuilder paramBuilder = new QueryParamBuilder();
+    paramBuilder.addNotNull(SERVER_NAME).addNotNull(DB_NAME)
+            .addNull(URI);
+
+    query.setFilter(paramBuilder.toString());
+    query.setOrdering("serverName ascending, dbName ascending, tableName ascending");
+    List<MSentryPrivilege> privileges =
+            (List<MSentryPrivilege>) query.executeWithMap(paramBuilder.getArguments());
+    if (privileges != null) {
+      for (MSentryPrivilege mPriv : privileges) {
+        String authzObj = mPriv.getDbName();
+        if (!isNULL(mPriv.getTableName())) {
+          authzObj = authzObj + "." + mPriv.getTableName();
+        }
+        HashMap<String, String> pUpdate = retVal.get(authzObj);
+        if (pUpdate == null) {
+          pUpdate = new HashMap<>();
+          retVal.put(authzObj, pUpdate);
+        }
+        for (MSentryRole mRole : mPriv.getRoles()) {
+          String existingPriv = pUpdate.get(mRole.getRoleName());
+          if (existingPriv == null) {
+            pUpdate.put(mRole.getRoleName(), mPriv.getAction().toUpperCase());
+          } else {
+            pUpdate.put(mRole.getRoleName(), existingPriv + ","
+                + mPriv.getAction().toUpperCase());
           }
-        });
+        }
+      }
+    }
+    return retVal;
   }
 
   /**
-   * This returns a Mapping of Authz -> [Paths]
+   * Retrieve an up-to-date snapshot of Role -> [Groups]
+   *
+   * @param pm PersistenceManager
+   * @return Mapping of Role -> [Groups]
+   * @throws Exception
    */
-  public Map<String, Set<String>> retrieveFullPathsImage() {
-    Map<String, Set<String>> result = new HashMap<>();
-    try {
-      result = (Map<String, Set<String>>) tm.executeTransaction(
-          new TransactionBlock() {
-            public Object execute(PersistenceManager pm) throws Exception {
-              Map<String, Set<String>> retVal = new HashMap<>();
-              Query query = pm.newQuery(MAuthzPathsMapping.class);
-              List<MAuthzPathsMapping> authzToPathsMappings = (List<MAuthzPathsMapping>) query.execute();
-              for (MAuthzPathsMapping authzToPaths : authzToPathsMappings) {
-                retVal.put(authzToPaths.getAuthzObjName(), authzToPaths.getPaths());
-              }
-              return retVal;
-            }
-          });
-    } catch (Exception e) {
-      LOGGER.error(e.getMessage(), e);
+  private Map<String, LinkedList<String>> retrieveFullRoleImage(PersistenceManager pm) throws Exception {
+    Map<String, LinkedList<String>> retVal = new HashMap<>();
+    Query query = pm.newQuery(MSentryGroup.class);
+    List<MSentryGroup> groups = (List<MSentryGroup>) query.execute();
+
+    if (groups != null) {
+      for (MSentryGroup mGroup : groups) {
+        for (MSentryRole role : mGroup.getRoles()) {
+          LinkedList<String> rUpdate = retVal.get(role.getRoleName());
+          if (rUpdate == null) {
+            rUpdate = new LinkedList<>();
+            retVal.put(role.getRoleName(), rUpdate);
+          }
+          rUpdate.add(mGroup.getGroupName());
+        }
+      }
     }
-    return result;
+
+    return retVal;
+  }
+
+  /**
+   * Retrieve an up-to-date snapshot of hiveAuthz -> [Paths]
+   * Internally calls retrieveFullPathsImageCore
+   *
+   * @return a Paths image contains mapping of hiveObj -> [Paths].
+   *         For empty image return EMPTY_CHANGE_ID and a empty map.
+   * @throws Exception
+   */
+  public PathsImage retrieveFullPathsImage() throws Exception {
+    return (PathsImage) tm.executeTransaction(
+    new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+        long curChangeID = getLastProcessedPermChangeIDCore(pm);
+        Map<String, Set<String>> pathImage = retrieveFullPathsImageCore(pm);
+
+        if (curChangeID == EMPTY_CHANGE_ID && !pathImage.isEmpty()) {
+          throw new Exception("Non-empty full paths image should not have" +
+              "an empty change ID.");
+        }
+        return new PathsImage(pathImage, curChangeID);
+      }
+    });
+  }
+
+  /**
+   * Retrieve an up-to-date snapshot of hiveAuthz -> [Paths]
+   *
+   * @return Mapping of hiveObj -> [Paths]
+   */
+  public Map<String, Set<String>> retrieveFullPathsImageCore(PersistenceManager pm) {
+    Map<String, Set<String>> retVal = new HashMap<>();
+    Query query = pm.newQuery(MAuthzPathsMapping.class);
+    List<MAuthzPathsMapping> authzToPathsMappings =
+        (List<MAuthzPathsMapping>) query.execute();
+    if (authzToPathsMappings != null) {
+      for (MAuthzPathsMapping authzToPaths : authzToPathsMappings) {
+        retVal.put(authzToPaths.getAuthzObjName(), authzToPaths.getPaths());
+      }
+    }
+    return retVal;
   }
 
   public void createAuthzPathsMapping(final String hiveObj,

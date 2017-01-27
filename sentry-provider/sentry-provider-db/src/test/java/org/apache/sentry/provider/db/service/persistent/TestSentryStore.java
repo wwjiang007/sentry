@@ -2194,9 +2194,10 @@ public class TestSentryStore extends org.junit.Assert {
     sentryStore.createAuthzPathsMapping("db1.table1", Sets.newHashSet("/user/hive/warehouse/db1.db/table1"));
     sentryStore.createAuthzPathsMapping("db1.table2", Sets.newHashSet("/user/hive/warehouse/db1.db/table2"));
 
-    Map<String, Set<String>> pathsImage = sentryStore.retrieveFullPathsImage();
-    assertEquals(2, pathsImage.size());
-    assertEquals(Sets.newHashSet("/user/hive/warehouse/db1.db/table1"), pathsImage.get("db1.table1"));
+    PathsImage pathsImage = sentryStore.retrieveFullPathsImage();
+    Map<String, Set<String>> pathImage = pathsImage.getPathImage();
+    assertEquals(2, pathImage.size());
+    assertEquals(Sets.newHashSet("/user/hive/warehouse/db1.db/table1"), pathImage.get("db1.table1"));
   }
 
   public void testQueryParamBuilder() {
