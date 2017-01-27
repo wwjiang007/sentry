@@ -39,6 +39,7 @@ import org.apache.sentry.hdfs.PermissionsUpdate;
 import org.apache.sentry.hdfs.Updateable;
 import org.apache.sentry.hdfs.service.thrift.TPrivilegeChanges;
 import org.apache.sentry.hdfs.service.thrift.TRoleChanges;
+import org.apache.sentry.provider.db.service.model.MAuthzPathsMapping;
 import org.apache.sentry.provider.db.service.model.MSentryPermChange;
 import org.apache.sentry.provider.db.service.model.MSentryPrivilege;
 import org.apache.sentry.provider.db.service.model.MSentryRole;
@@ -2198,6 +2199,16 @@ public class TestSentryStore extends org.junit.Assert {
     Map<String, Set<String>> pathImage = pathsImage.getPathImage();
     assertEquals(2, pathImage.size());
     assertEquals(Sets.newHashSet("/user/hive/warehouse/db1.db/table1"), pathImage.get("db1.table1"));
+  }
+
+  @Test
+  public void testUpdateAuthzPathsMapping() throws Exception {
+    sentryStore.updateAuthzPathsMapping("db1.table", Sets.newHashSet("/user/hive/warehouse/db1.db/table1"));
+    sentryStore.updateAuthzPathsMapping("db1.table", Sets.newHashSet("/user/hive/warehouse/db1.db/table2"));
+
+    MAuthzPathsMapping mAuthzPathsMapping = sentryStore.getMAuthzPathsMapping("db1.table");
+    assertEquals(Sets.newHashSet("/user/hive/warehouse/db1.db/table1", "/user/hive/warehouse/db1.db/table2"),
+        mAuthzPathsMapping.getPaths());
   }
 
   public void testQueryParamBuilder() {

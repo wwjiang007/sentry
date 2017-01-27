@@ -19,6 +19,7 @@ package org.apache.sentry.service.thrift;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Sets;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
@@ -32,8 +33,8 @@ import org.apache.sentry.binding.hive.conf.HiveAuthzConf;
 import org.apache.sentry.core.common.exception.*;
 import org.apache.sentry.hdfs.PathsUpdate;
 import org.apache.sentry.hdfs.PermissionsUpdate;
-import org.apache.sentry.hdfs.UpdateableAuthzPaths;
 import org.apache.sentry.hdfs.FullUpdateInitializer;
+import org.apache.sentry.hdfs.SentryMalformedPathException;
 import org.apache.sentry.hdfs.service.thrift.TPrivilegeChanges;
 import org.apache.sentry.provider.db.SentryPolicyStorePlugin;
 import org.apache.sentry.provider.db.service.persistent.DeltaTransactionBlock;
@@ -321,12 +322,12 @@ public class HMSFollower implements Runnable {
   /**
    * Throws SentryInvalidHMSEventException if Notification event contains insufficient information
    */
-  void processNotificationEvents(List<NotificationEvent> events) throws
-      SentryInvalidHMSEventException, SentryInvalidInputException {
+  void processNotificationEvents(List<NotificationEvent> events) throws Exception {
     SentryJSONMessageDeserializer deserializer = new SentryJSONMessageDeserializer();
 
     for (NotificationEvent event : events) {
-      String dbName, tableName, oldLocation, newLocation, location;
+      String dbName, tableName, oldLocation, newLocation, location, authzObj;
+      List<String> pathTree;
       switch (HCatEventMessage.EventType.valueOf(event.getEventType())) {
         case CREATE_DATABASE:
           SentryJSONCreateDatabaseMessage message = deserializer.getCreateDatabaseMessage(event.getMessage());
@@ -346,7 +347,15 @@ public class HMSFollower implements Runnable {
               throw new SentryInvalidInputException("Could not process Create database event. Event: " + event.toString(), e);
             }
           }
-          //TODO: HDFSPlugin.addPath(dbName, location)
+          // addPath into Sentry DB. Skip update if encounter malformed path.
+          authzObj = dbName;
+          pathTree = getPath(location);
+          if (pathTree != null) {
+            DeltaTransactionBlock deltaTransactionBlock = addPaths(authzObj, pathTree);
+            Set<String> paths = Sets.newHashSet();
+            paths.add(PathsUpdate.getPath(pathTree));
+            sentryStore.updateAuthzPathsMapping(authzObj, paths, deltaTransactionBlock);
+          }
           break;
         case DROP_DATABASE:
           SentryJSONDropDatabaseMessage dropDatabaseMessage = deserializer.getDropDatabaseMessage(event.getMessage());
@@ -384,7 +393,15 @@ public class HMSFollower implements Runnable {
               throw new SentryInvalidInputException("Could not process Create table event. Event: " + event.toString(), e);
             }
           }
-          //TODO: HDFSPlugin.deletePath(dbName, location)
+          // addPath into Sentry DB. Skip update if encounter malformed path.
+          authzObj = dbName + "." + tableName;
+          pathTree = getPath(location);
+          if (pathTree != null) {
+            DeltaTransactionBlock deltaTransactionBlock = addPaths(authzObj, pathTree);
+            Set<String> paths = Sets.newHashSet();
+            paths.add(PathsUpdate.getPath(pathTree));
+            sentryStore.updateAuthzPathsMapping(authzObj, paths, deltaTransactionBlock);
+          }
           break;
         case DROP_TABLE:
           SentryJSONDropTableMessage dropTableMessage = deserializer.getDropTableMessage(event.getMessage());
@@ -521,5 +538,32 @@ public class HMSFollower implements Runnable {
       }
     }
     return authzObj == null ? null : authzObj.toLowerCase();
+  }
+
+  private DeltaTransactionBlock addPaths(String authzObj, List<String> pathTree) {
+    LOGGER.debug("#### HMS Path Update ["
+        + "OP : addPath, "
+        + "authzObj : " + authzObj.toLowerCase() + ", "
+        + "path : " + pathTree.toString() + "]");
+    PathsUpdate update = new PathsUpdate();
+    update.newPathChange(authzObj.toLowerCase()).addToAddPaths(pathTree);
+    return new DeltaTransactionBlock(update);
+  }
+
+  /**
+   * Get path tree from a given path. It throws SentryMalformedPathException
+   * if encountered malformed path.
+   *
+   * @param path
+   * @return the path tree.
+   */
+  private List<String> getPath(String path) {
+    try {
+      return PathsUpdate.parsePath(path);
+    } catch (SentryMalformedPathException e) {
+      LOGGER.error("Unexpected path = " + path);
+      e.printStackTrace();
+      return null;
+    }
   }
 }

@@ -2269,13 +2269,12 @@ public class SentryStore {
     return (PathsImage) tm.executeTransaction(
     new TransactionBlock() {
       public Object execute(PersistenceManager pm) throws Exception {
-        long curChangeID = getLastProcessedPermChangeIDCore(pm);
+
+        // curChangeID could be 0, since first full snapshot is fetching
+        // from HMS, and does not have corresponding delta update.
+        long curChangeID = getLastProcessedPathChangeIDCore(pm);
         Map<String, Set<String>> pathImage = retrieveFullPathsImageCore(pm);
 
-        if (curChangeID == EMPTY_CHANGE_ID && !pathImage.isEmpty()) {
-          throw new Exception("Non-empty full paths image should not have" +
-              "an empty change ID.");
-        }
         return new PathsImage(pathImage, curChangeID);
       }
     });
@@ -2331,7 +2330,7 @@ public class SentryStore {
   private void createAuthzPathsMappingCore(PersistenceManager pm, String authzObj,
       Set<String> paths) throws SentryAlreadyExistsException {
 
-    MAuthzPathsMapping mAuthzPathsMapping = getMAuthzPathsMapping(pm, authzObj);
+    MAuthzPathsMapping mAuthzPathsMapping = getMAuthzPathsMappingCore(pm, authzObj);
 
     if (mAuthzPathsMapping == null) {
       mAuthzPathsMapping =
@@ -2342,10 +2341,59 @@ public class SentryStore {
     }
   }
 
+
+  public void updateAuthzPathsMapping(final String hiveObj, final Set<String> paths)
+        throws Exception {
+    tm.executeTransactionWithRetry (
+      new TransactionBlock() {
+        public Object execute(PersistenceManager pm) throws Exception {
+          updateAuthzPathsMappingCore(pm, hiveObj, paths);
+          return null;
+        }
+      });
+  }
+
+  public void updateAuthzPathsMapping(final String hiveObj, final Set<String> paths,
+  final DeltaTransactionBlock deltaTransactionBlock) throws Exception {
+    execute(deltaTransactionBlock, new TransactionBlock() {
+      public Object execute(PersistenceManager pm) throws Exception {
+        updateAuthzPathsMappingCore(pm, hiveObj, paths);
+        return null;
+      }
+    });
+  }
+
+  private void updateAuthzPathsMappingCore(PersistenceManager pm, String authzObj,
+    Set<String> paths) throws SentryAlreadyExistsException {
+
+    MAuthzPathsMapping mAuthzPathsMapping = getMAuthzPathsMappingCore(pm, authzObj);
+
+    if (mAuthzPathsMapping == null) {
+      mAuthzPathsMapping =
+        new MAuthzPathsMapping(authzObj, paths, System.currentTimeMillis());
+    } else {
+      mAuthzPathsMapping.getPaths().addAll(paths);
+    }
+    pm.makePersistent(mAuthzPathsMapping);
+  }
+
   /**
    * Get the MAuthzPathsMapping object from authzObj
    */
-  public MAuthzPathsMapping getMAuthzPathsMapping(PersistenceManager pm, String authzObj) {
+  public MAuthzPathsMapping getMAuthzPathsMapping(final String authzObj)
+      throws Exception{
+    return tm.executeTransactionWithRetry(
+    new TransactionBlock<MAuthzPathsMapping>() {
+      public MAuthzPathsMapping execute(PersistenceManager pm) throws Exception {
+        return getMAuthzPathsMappingCore(pm, authzObj);
+      }
+    });
+  }
+
+  /**
+   * Get the MAuthzPathsMapping object from authzObj
+   */
+  private MAuthzPathsMapping getMAuthzPathsMappingCore(PersistenceManager pm, String authzObj) {
     Query query = pm.newQuery(MAuthzPathsMapping.class);
     query.setFilter("this.authzObjName == t");
     query.declareParameters("java.lang.String t");
