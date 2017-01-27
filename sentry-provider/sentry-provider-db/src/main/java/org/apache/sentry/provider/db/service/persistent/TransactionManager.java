@@ -101,7 +101,7 @@ public class TransactionManager {
    * Execute some code as a single transaction, the code in tb.execute()
    * should not start new transaction or manipulate transactions with the
    * PersistenceManager.
-   * 
+   *
    * @param tb transaction block with code to be executed
    * @return Object with the result of tb.execute()
    */
