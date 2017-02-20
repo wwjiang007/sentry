@@ -19,144 +19,49 @@ package org.apache.sentry.provider.db.generic.service.thrift;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.security.PrivilegedExceptionAction;
 import java.util.*;
 
-import javax.security.auth.callback.CallbackHandler;
-
 import org.apache.hadoop.conf.Configuration;
-import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION;
-import org.apache.hadoop.net.NetUtils;
-import org.apache.hadoop.security.SaslRpcServer;
-import org.apache.hadoop.security.SaslRpcServer.AuthMethod;
-import org.apache.hadoop.security.SecurityUtil;
-import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.sentry.SentryServiceClientTransportDefaultImpl;
+import org.apache.sentry.core.common.ServiceTransportConstants;
 import org.apache.sentry.core.common.exception.SentryUserException;
 import org.apache.sentry.core.common.ActiveRoleSet;
 import org.apache.sentry.core.common.Authorizable;
 import org.apache.sentry.core.model.db.AccessConstants;
 import org.apache.sentry.service.thrift.ServiceConstants;
-import org.apache.sentry.service.thrift.ServiceConstants.ClientConfig;
-import org.apache.sentry.service.thrift.ServiceConstants.ServerConfig;
 import org.apache.sentry.service.thrift.Status;
 import org.apache.sentry.service.thrift.sentry_common_serviceConstants;
 import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.protocol.TMultiplexedProtocol;
-import org.apache.thrift.transport.TSaslClientTransport;
-import org.apache.thrift.transport.TSocket;
-import org.apache.thrift.transport.TTransport;
-import org.apache.thrift.transport.TTransportException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 
-public class SentryGenericServiceClientDefaultImpl implements SentryGenericServiceClient {
-  private final Configuration conf;
-  private final InetSocketAddress serverAddress;
-  private final boolean kerberos;
-  private final String[] serverPrincipalParts;
+public class SentryGenericServiceClientDefaultImpl  extends SentryServiceClientTransportDefaultImpl implements SentryGenericServiceClient {
   private SentryGenericPolicyService.Client client;
-  private TTransport transport;
-  private int connectionTimeout;
   private static final Logger LOGGER = LoggerFactory
                                        .getLogger(SentryGenericServiceClientDefaultImpl.class);
   private static final String THRIFT_EXCEPTION_MESSAGE = "Thrift exception occured ";
-
   /**
-   * This transport wraps the Sasl transports to set up the right UGI context for open().
+   * Initialize the sentry configurations.
    */
-  public static class UgiSaslClientTransport extends TSaslClientTransport {
-    protected UserGroupInformation ugi = null;
-
-    public UgiSaslClientTransport(String mechanism, String authorizationId,
-        String protocol, String serverName, Map<String, String> props,
-        CallbackHandler cbh, TTransport transport, boolean wrapUgi, Configuration conf)
-        throws IOException {
-      super(mechanism, authorizationId, protocol, serverName, props, cbh,
-          transport);
-      if (wrapUgi) {
-       // If we don't set the configuration, the UGI will be created based on
-       // what's on the classpath, which may lack the kerberos changes we require
-        UserGroupInformation.setConfiguration(conf);
-        ugi = UserGroupInformation.getLoginUser();
-      }
-    }
-
-    // open the SASL transport with using the current UserGroupInformation
-    // This is needed to get the current login context stored
-    @Override
-    public void open() throws TTransportException {
-      if (ugi == null) {
-        baseOpen();
-      } else {
-        try {
-          if (ugi.isFromKeytab()) {
-            ugi.checkTGTAndReloginFromKeytab();
-          }
-          ugi.doAs(new PrivilegedExceptionAction<Void>() {
-            public Void run() throws TTransportException {
-              baseOpen();
-              return null;
-            }
-          });
-        } catch (IOException e) {
-          throw new TTransportException("Failed to open SASL transport: "  + e.getMessage(), e);
-        } catch (InterruptedException e) {
-          throw new TTransportException(
-              "Interrupted while opening underlying transport: " + e.getMessage(), e);
-        }
-      }
-    }
-
-    private void baseOpen() throws TTransportException {
-      super.open();
-    }
+  public SentryGenericServiceClientDefaultImpl(Configuration conf)
+          throws IOException {
+    super(conf,ServiceTransportConstants.sentryService.GENERIC_POLICY_SERVICE);
   }
 
-  public SentryGenericServiceClientDefaultImpl(Configuration conf) throws IOException {
-    // copy the configuration because we may make modifications to it.
-    this.conf = new Configuration(conf);
-    Preconditions.checkNotNull(this.conf, "Configuration object cannot be null");
-    this.serverAddress = NetUtils.createSocketAddr(Preconditions.checkNotNull(
-                           conf.get(ClientConfig.SERVER_RPC_ADDRESS), "Config key "
-                           + ClientConfig.SERVER_RPC_ADDRESS + " is required"), conf.getInt(
-                           ClientConfig.SERVER_RPC_PORT, ClientConfig.SERVER_RPC_PORT_DEFAULT));
-    this.connectionTimeout = conf.getInt(ClientConfig.SERVER_RPC_CONN_TIMEOUT,
-                                         ClientConfig.SERVER_RPC_CONN_TIMEOUT_DEFAULT);
-    kerberos = ServerConfig.SECURITY_MODE_KERBEROS.equalsIgnoreCase(
-        conf.get(ServerConfig.SECURITY_MODE, ServerConfig.SECURITY_MODE_KERBEROS).trim());
-    transport = new TSocket(serverAddress.getHostName(),
-        serverAddress.getPort(), connectionTimeout);
-    if (kerberos) {
-      String serverPrincipal = Preconditions.checkNotNull(conf.get(ServerConfig.PRINCIPAL), ServerConfig.PRINCIPAL + " is required");
-      // since the client uses hadoop-auth, we need to set kerberos in
-      // hadoop-auth if we plan to use kerberos
-      conf.set(HADOOP_SECURITY_AUTHENTICATION, ServerConfig.SECURITY_MODE_KERBEROS);
+  public SentryGenericServiceClientDefaultImpl(String addr, int port,
+                                               Configuration conf) throws IOException {
+    super(addr,port,conf, ServiceTransportConstants.sentryService.GENERIC_POLICY_SERVICE);
+    connect(serverAddress);
+  }
 
-      // Resolve server host in the same way as we are doing on server side
-      serverPrincipal = SecurityUtil.getServerPrincipal(serverPrincipal, serverAddress.getAddress());
-      LOGGER.debug("Using server kerberos principal: " + serverPrincipal);
-
-      serverPrincipalParts = SaslRpcServer.splitKerberosName(serverPrincipal);
-      Preconditions.checkArgument(serverPrincipalParts.length == 3,
-           "Kerberos principal should have 3 parts: " + serverPrincipal);
-      boolean wrapUgi = "true".equalsIgnoreCase(conf
-          .get(ServerConfig.SECURITY_USE_UGI_TRANSPORT, "true"));
-      transport = new UgiSaslClientTransport(AuthMethod.KERBEROS.getMechanismName(),
-          null, serverPrincipalParts[0], serverPrincipalParts[1],
-          ClientConfig.SASL_PROPERTIES, null, transport, wrapUgi, conf);
-    } else {
-      serverPrincipalParts = null;
-    }
-    try {
-      transport.open();
-    } catch (TTransportException e) {
-      throw new IOException("Transport exception while opening transport: " + e.getMessage(), e);
-    }
-    LOGGER.debug("Successfully opened transport: " + transport + " to " + serverAddress);
+  /**
+   * Connect to the specified socket address and throw IOException if failed.
+   */
+  protected void connect(InetSocketAddress serverAddress) throws IOException {
+    super.connect(serverAddress);
     long maxMessageSize = conf.getLong(ServiceConstants.ClientConfig.SENTRY_POLICY_CLIENT_THRIFT_MAX_MESSAGE_SIZE,
         ServiceConstants.ClientConfig.SENTRY_POLICY_CLIENT_THRIFT_MAX_MESSAGE_SIZE_DEFAULT);
     TMultiplexedProtocol protocol = new TMultiplexedProtocol(
@@ -165,8 +70,6 @@ public class SentryGenericServiceClientDefaultImpl implements SentryGenericServi
     client = new SentryGenericPolicyService.Client(protocol);
     LOGGER.debug("Successfully created client");
   }
-
-
 
   /**
    * Create a sentry role
@@ -580,12 +483,4 @@ public class SentryGenericServiceClientDefaultImpl implements SentryGenericServi
       throw new SentryUserException(THRIFT_EXCEPTION_MESSAGE, e);
     }
   }
-
-  @Override
-  public void close() {
-    if (transport != null) {
-      transport.close();
-    }
-  }
-
 }

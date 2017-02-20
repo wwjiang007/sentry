@@ -18,7 +18,10 @@
 package org.apache.sentry.hdfs;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.sentry.core.common.RetryClientInvocationHandler;
+import org.apache.sentry.service.thrift.ServiceConstants;
 
+import java.lang.reflect.Proxy;
 /**
  * Client factory to create normal client or proxy with HA invocation handler
  */
@@ -27,10 +30,21 @@ public class SentryHDFSServiceClientFactory {
   private SentryHDFSServiceClientFactory() {
     // Make constructor private to avoid instantiation
   }
-  
-  public static SentryHDFSServiceClient create(Configuration conf)
-      throws Exception {
-    return new SentryHDFSServiceClientDefaultImpl(conf);
-  }
 
+  public static SentryHDFSServiceClient create(Configuration conf)
+    throws Exception {
+    boolean pooled = conf.getBoolean(
+      ServiceConstants.ClientConfig.SENTRY_POOL_ENABLED, ServiceConstants.ClientConfig.SENTRY_POOL_ENABLED_DEFAULT);
+    if (pooled) {
+      //SentryHDFSServiceClient doesn't have pool implementation
+      // TODO Implement pool for SentryHDFSServiceClient
+      return null;
+    } else {
+      RetryClientInvocationHandler clientHandler = new RetryClientInvocationHandler(conf, new SentryHDFSServiceClientDefaultImpl(conf));
+      return (SentryHDFSServiceClient) Proxy
+        .newProxyInstance(SentryHDFSServiceClientDefaultImpl.class.getClassLoader(),
+          SentryHDFSServiceClientDefaultImpl.class.getInterfaces(),
+          clientHandler);
+    }
+  }
 }

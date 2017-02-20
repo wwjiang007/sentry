@@ -22,11 +22,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.sentry.core.common.SentryServiceClient;
 import org.apache.sentry.core.common.exception.SentryUserException;
 import org.apache.sentry.core.common.ActiveRoleSet;
 import org.apache.sentry.core.common.Authorizable;
 
-public interface SentryPolicyServiceClient {
+
+public interface SentryPolicyServiceClient extends SentryServiceClient {
 
   void createRole(String requestorUserName, String roleName) throws SentryUserException;
 
@@ -195,7 +197,7 @@ public interface SentryPolicyServiceClient {
    */
   String getConfigValue(String propertyName, String defaultValue) throws SentryUserException;
 
-  void close();
+  //void close();
 
   // Import the sentry mapping data with map structure
   void importPolicy(Map<String, Map<String, Set<String>>> policyFileMappingData,

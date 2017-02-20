@@ -23,6 +23,7 @@ import java.security.PrivilegedExceptionAction;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.sentry.hdfs.ServiceConstants.ClientConfig;
 import org.apache.sentry.service.thrift.SentryServiceIntegrationBase;
+import org.apache.sentry.core.common.HdfsServiceTransportConstants;
 import org.junit.After;
 import org.junit.Before;
 
@@ -54,17 +55,16 @@ public class SentryHdfsServiceIntegrationBase extends
     }
 
     // SentryHdfs client configuration setup
-    conf.set(ClientConfig.SERVER_RPC_ADDRESS, server.getAddress()
+    HdfsServiceTransportConstants serviceConstants = new HdfsServiceTransportConstants();
+    conf.set(serviceConstants.getRpcAddress(), server.getAddress()
         .getHostName());
-    conf.set(ClientConfig.SERVER_RPC_ADDRESS, server.getAddress()
-        .getHostName());
-    conf.set(ClientConfig.SERVER_RPC_PORT,
+    conf.set(serviceConstants.getServerRpcPort(),
         String.valueOf(server.getAddress().getPort()));
 
     if (kerberos) {
-      conf.set(ClientConfig.SECURITY_MODE, ClientConfig.SECURITY_MODE_KERBEROS);
-      conf.set(ClientConfig.SECURITY_USE_UGI_TRANSPORT, "true");
-      conf.set(ClientConfig.PRINCIPAL, getServerKerberosName());
+      conf.set(serviceConstants.getSecurityMode(), ClientConfig.SECURITY_MODE_KERBEROS);
+      conf.set(serviceConstants.getSecurityUseUgiTransport(), "true");
+      conf.set(serviceConstants.getPrincipal(), getServerKerberosName());
       hdfsClient = UserGroupInformation.getLoginUser().doAs(
           new PrivilegedExceptionAction<SentryHDFSServiceClient>() {
             @Override

@@ -72,25 +72,15 @@ public class ServiceConstants {
   public static class ClientConfig {
     public static final ImmutableMap<String, String> SASL_PROPERTIES = ServiceConstants.SASL_PROPERTIES;
 
-    public static final String SECURITY_MODE = "sentry.hdfs.service.security.mode";
     public static final String SECURITY_MODE_KERBEROS = "kerberos";
-    public static final String SECURITY_MODE_NONE = "none";
-    public static final String SECURITY_USE_UGI_TRANSPORT = "sentry.hdfs.service.security.use.ugi";
-    public static final String PRINCIPAL = "sentry.hdfs.service.server.principal";
 
-    public static final String SERVER_RPC_PORT = "sentry.hdfs.service.client.server.rpc-port";
-    public static final int SERVER_RPC_PORT_DEFAULT = 8038;
-
-    public static final String SERVER_RPC_ADDRESS = "sentry.hdfs.service.client.server.rpc-address";
-
-    public static final String SERVER_RPC_CONN_TIMEOUT = "sentry.hdfs.service.client.server.rpc-connection-timeout";
-    public static final int SERVER_RPC_CONN_TIMEOUT_DEFAULT = 200000;
     public static final String USE_COMPACT_TRANSPORT = "sentry.hdfs.service.client.compact.transport";
     public static final boolean USE_COMPACT_TRANSPORT_DEFAULT = false;
 
     // max message size for thrift messages
     public static final String SENTRY_HDFS_THRIFT_MAX_MESSAGE_SIZE = "sentry.hdfs.thrift.max.message.size";
     public static final long SENTRY_HDFS_THRIFT_MAX_MESSAGE_SIZE_DEFAULT = 100 * 1024 * 1024;
+
   }
 
 }

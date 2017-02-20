@@ -25,6 +25,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyServiceClient;
 import org.apache.sentry.provider.db.service.thrift.SentryPolicyServiceClientDefaultImpl;
 import org.apache.sentry.service.thrift.ServiceConstants.ClientConfig;
+import org.apache.sentry.core.common.RetryClientInvocationHandler;
 
 public final class SentryServiceClientFactory {
 
@@ -33,17 +34,19 @@ public final class SentryServiceClientFactory {
 
   public static SentryPolicyServiceClient create(Configuration conf) throws Exception {
     boolean pooled = conf.getBoolean(
-        ClientConfig.SENTRY_POOL_ENABLED, ClientConfig.SENTRY_POOL_ENABLED_DEFAULT);
+      ClientConfig.SENTRY_POOL_ENABLED, ClientConfig.SENTRY_POOL_ENABLED_DEFAULT);
     if (pooled) {
       return (SentryPolicyServiceClient) Proxy
-          .newProxyInstance(SentryPolicyServiceClientDefaultImpl.class.getClassLoader(),
-              SentryPolicyServiceClientDefaultImpl.class.getInterfaces(),
-              new PoolClientInvocationHandler(conf));
+        .newProxyInstance(SentryPolicyServiceClientDefaultImpl.class.getClassLoader(),
+          SentryPolicyServiceClientDefaultImpl.class.getInterfaces(),
+          new PoolClientInvocationHandler(conf));
     } else {
+      RetryClientInvocationHandler clientHandler = new RetryClientInvocationHandler(conf,
+        new SentryPolicyServiceClientDefaultImpl(conf));
       return (SentryPolicyServiceClient) Proxy
-          .newProxyInstance(SentryPolicyServiceClientDefaultImpl.class.getClassLoader(),
-              SentryPolicyServiceClientDefaultImpl.class.getInterfaces(),
-              new RetryClientInvocationHandler(conf));
+        .newProxyInstance(SentryPolicyServiceClientDefaultImpl.class.getClassLoader(),
+          SentryPolicyServiceClientDefaultImpl.class.getInterfaces(),
+          clientHandler);
     }
   }
 }

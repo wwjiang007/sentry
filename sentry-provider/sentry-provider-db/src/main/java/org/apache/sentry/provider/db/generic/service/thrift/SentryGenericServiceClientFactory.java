@@ -15,20 +15,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.sentry.provider.db.generic.service.thrift;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.sentry.core.common.RetryClientInvocationHandler;
+import org.apache.sentry.service.thrift.ServiceConstants;
 
-/**
- * SentryGenericServiceClientFactory is a public class for the components which using Generic Model to create sentry client.
- */
+import java.lang.reflect.Proxy;
+
 public final class SentryGenericServiceClientFactory {
 
-  private SentryGenericServiceClientFactory() {
-  }
+    private SentryGenericServiceClientFactory() {
+    }
 
-  public static SentryGenericServiceClient create(Configuration conf) throws Exception {
-      return new SentryGenericServiceClientDefaultImpl(conf);
-  }
-    
+    public static SentryGenericServiceClient create(Configuration conf) throws Exception {
+        boolean pooled = conf.getBoolean(
+          ServiceConstants.ClientConfig.SENTRY_POOL_ENABLED, ServiceConstants.ClientConfig.SENTRY_POOL_ENABLED_DEFAULT);
+        if (pooled) {
+            //SentryGenericServiceClient doesn't have pool implementation
+            // TODO Implement pool for SentryGenericServiceClient
+            return null;
+        } else {
+            RetryClientInvocationHandler clientHandler = new RetryClientInvocationHandler(conf,
+              new SentryGenericServiceClientDefaultImpl(conf));
+            return (SentryGenericServiceClient) Proxy
+              .newProxyInstance(SentryGenericServiceClientDefaultImpl.class.getClassLoader(),
+                SentryGenericServiceClientDefaultImpl.class.getInterfaces(),
+                clientHandler);
+
+        }
+    }
 }

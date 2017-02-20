@@ -30,7 +30,7 @@ import com.google.common.collect.ImmutableMap;
 import java.io.FileInputStream;
 import java.util.Properties;
 
-public class SentryMain {
+public class     SentryMain {
   private static final String HELP_SHORT = "h";
   private static final String HELP_LONG = "help";
   private static final String VERSION_SHORT = "v";

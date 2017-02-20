@@ -17,7 +17,10 @@
  */
 package org.apache.sentry.hdfs;
 
-public interface SentryHDFSServiceClient {
+import org.apache.sentry.core.common.SentryServiceClient;
+import org.apache.sentry.core.common.exception.SentryHdfsServiceException;
+
+public interface SentryHDFSServiceClient extends SentryServiceClient {
   String SENTRY_HDFS_SERVICE_NAME = "SentryHDFSService";
 
   void notifyHMSUpdate(PathsUpdate update)
@@ -28,6 +31,5 @@ public interface SentryHDFSServiceClient {
   SentryAuthzUpdate getAllUpdatesFrom(long permSeqNum, long pathSeqNum)
       throws SentryHdfsServiceException;
 
-  void close();
 }
 
