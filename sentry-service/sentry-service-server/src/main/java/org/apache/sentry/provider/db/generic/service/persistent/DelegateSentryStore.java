@@ -64,8 +64,6 @@ public class DelegateSentryStore implements SentryStoreLayer {
 
   DelegateSentryStore(Configuration conf) throws Exception {
     this.privilegeOperator = new PrivilegeOperatePersistence(conf);
-    // The generic model doesn't turn on the thread that cleans hive privileges
-    conf.set(ServerConfig.SENTRY_STORE_ORPHANED_PRIVILEGE_REMOVAL,"false");
     this.conf = conf;
     //delegated old sentryStore
     this.delegate = new SentryStore(conf);
@@ -125,7 +123,7 @@ public class DelegateSentryStore implements SentryStoreLayer {
             String trimmedRole = toTrimmedLower(role);
             MSentryRole mRole = getRole(trimmedRole, pm);
             if (mRole == null) {
-              throw new SentryNoSuchObjectException("Role: " + trimmedRole + " doesn't exist");
+              throw new SentryNoSuchObjectException("Role: " + trimmedRole);
             }
             /*
              * check with grant option
@@ -149,7 +147,7 @@ public class DelegateSentryStore implements SentryStoreLayer {
             String trimmedRole = toTrimmedLower(role);
             MSentryRole mRole = getRole(trimmedRole, pm);
             if (mRole == null) {
-              throw new SentryNoSuchObjectException("Role: " + trimmedRole + " doesn't exist");
+              throw new SentryNoSuchObjectException("Role: " + trimmedRole);
             }
             /*
              * check with grant option
