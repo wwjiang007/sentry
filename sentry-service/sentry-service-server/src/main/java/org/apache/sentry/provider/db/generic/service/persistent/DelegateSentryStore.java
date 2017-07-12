@@ -62,11 +62,11 @@ public class DelegateSentryStore implements SentryStoreLayer {
   private Set<String> adminGroups;
   private PrivilegeOperatePersistence privilegeOperator;
 
-  DelegateSentryStore(Configuration conf) throws Exception {
+  public DelegateSentryStore(Configuration conf) throws Exception {
     this.privilegeOperator = new PrivilegeOperatePersistence(conf);
     this.conf = conf;
     //delegated old sentryStore
-    this.delegate = new SentryStore(conf);
+    this.delegate = SentryStore.getInstance(conf);
     adminGroups = ImmutableSet.copyOf(toTrimmed(Sets.newHashSet(conf.getStrings(
         ServerConfig.ADMIN_GROUPS, new String[]{}))));
   }
@@ -389,7 +389,7 @@ public class DelegateSentryStore implements SentryStoreLayer {
 
    @Override
   public void close() {
-    delegate.stop();
+    delegate.close();
   }
 
   private Set<TSentryGroup> toTSentryGroups(Set<String> groups) {

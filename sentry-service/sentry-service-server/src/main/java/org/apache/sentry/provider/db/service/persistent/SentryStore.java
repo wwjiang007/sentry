@@ -27,11 +27,13 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.jdo.FetchGroup;
 import javax.jdo.JDODataStoreException;
@@ -83,7 +85,10 @@ import com.google.common.collect.Sets;
  * such as role and group names will be normalized to lowercase
  * in addition to starting and ending whitespace.
  */
-public class SentryStore {
+public final class SentryStore {
+  // SentryStore is a singleton, except for testing purposes
+  private static final AtomicReference<SentryStore> instance = new AtomicReference<>();
+
   private static final Logger LOGGER = LoggerFactory
           .getLogger(SentryStore.class);
 
@@ -104,7 +109,7 @@ public class SentryStore {
   // For counters, representation of the "unknown value"
   private static final long COUNT_VALUE_UNKNOWN = -1;
 
-  private static final Set<String> ALL_ACTIONS = Sets.newHashSet(AccessConstants.ALL,
+  private static final Set<String> ALL_ACTIONS = ImmutableSet.of(AccessConstants.ALL,
       AccessConstants.SELECT, AccessConstants.INSERT, AccessConstants.ALTER,
       AccessConstants.CREATE, AccessConstants.DROP, AccessConstants.INDEX,
       AccessConstants.LOCK);
@@ -112,14 +117,56 @@ public class SentryStore {
   // Now partial revoke just support action with SELECT,INSERT and ALL.
   // e.g. If we REVOKE SELECT from a privilege with action ALL, it will leads to INSERT
   // Otherwise, if we revoke other privilege(e.g. ALTER,DROP...), we will remove it from a role directly.
-  private static final Set<String> PARTIAL_REVOKE_ACTIONS = Sets.newHashSet(AccessConstants.ALL,
+  private static final Set<String> PARTIAL_REVOKE_ACTIONS = ImmutableSet.of(AccessConstants.ALL,
       AccessConstants.ACTION_ALL.toLowerCase(), AccessConstants.SELECT, AccessConstants.INSERT);
 
   private final PersistenceManagerFactory pmf;
   private Configuration conf;
   private final TransactionManager tm;
 
-  public SentryStore(Configuration conf) throws Exception {
+  /**
+   * return a singleton instance of the SentryStore
+   * @param conf Configuration object. Only used for the initial construction,
+   *             ignored for all subsequent calls.
+   * @return instance of the SentryStore object.
+   * @throws Exception if something goes wrong during SentryStore creation
+   */
+  public static SentryStore getInstance(Configuration conf) throws Exception {
+    // If there is an instance already, return it
+    SentryStore store = instance.get();
+    if (store != null) {
+      LOGGER.debug("Using cached SentryStore store");
+      return store;
+    }
+    LOGGER.debug("creating new SentryStore");
+    // Create a new one
+    store = new SentryStore(conf);
+    // Save the new instance. In case someone beat us in the race, ignore the new instance
+    boolean ok = instance.compareAndSet(null, store);
+    if (ok) {
+      // Successfully saved, return the new value
+      return store;
+    }
+    // Someone already installed a new store, use it.
+    store.close();
+    return instance.get();
+  }
+
+  /**
+   * Reset the static instance of SentryStore. This is only used by tests when they want to start
+   * a new SentryStore with a different configuration.
+   */
+  public static void resetSentryStore() {
+    SentryStore store = instance.get();
+    instance.set(null);
+    // Close old instance
+    if (store != null) {
+      store.close();
+    }
+  }
+
+  @VisibleForTesting
+  protected SentryStore(Configuration conf) throws Exception {
     this.conf = conf;
     Properties prop = new Properties();
     prop.putAll(ServerConfig.SENTRY_STORE_DEFAULTS);
@@ -217,7 +264,7 @@ public class SentryStore {
     }
   }
 
-  public synchronized void stop() {
+  public synchronized void close() {
     if (pmf != null) {
       pmf.close();
     }
@@ -493,7 +540,6 @@ public class SentryStore {
         mPrivilege = convertToMSentryPrivilege(privilege);
       }
       mPrivilege.appendRole(mRole);
-      pm.makePersistent(mRole);
       pm.makePersistent(mPrivilege);
     }
     return mPrivilege;
@@ -654,7 +700,7 @@ public class SentryStore {
    * The responsibility to commit/rollback the transaction should be handled by the caller.
    */
   private void populateChildren(PersistenceManager pm, Set<String> roleNames, MSentryPrivilege priv,
-      Set<MSentryPrivilege> children) throws SentryInvalidInputException {
+      Collection<MSentryPrivilege> children) throws SentryInvalidInputException {
     Preconditions.checkNotNull(pm);
     if (!isNULL(priv.getServerName()) || !isNULL(priv.getDbName())
         || !isNULL(priv.getTableName())) {
@@ -1712,44 +1758,49 @@ public class SentryStore {
       TSentryPrivilege tPrivilege,
       TSentryPrivilege newTPrivilege) throws SentryNoSuchObjectException,
       SentryInvalidInputException {
-    HashSet<MSentryRole> roleSet = Sets.newHashSet();
-
+    Collection<MSentryRole> roleSet = new HashSet<>();
     List<MSentryPrivilege> mPrivileges = getMSentryPrivileges(tPrivilege, pm);
-    if (mPrivileges != null && !mPrivileges.isEmpty()) {
-      for (MSentryPrivilege mPrivilege : mPrivileges) {
-        roleSet.addAll(ImmutableSet.copyOf(mPrivilege.getRoles()));
-      }
+    for (MSentryPrivilege mPrivilege : mPrivileges) {
+      roleSet.addAll(ImmutableSet.copyOf(mPrivilege.getRoles()));
     }
-
+    // Dropping the privilege
+    if (newTPrivilege == null) {
+      for (MSentryRole role : roleSet) {
+        alterSentryRoleRevokePrivilegeCore(pm, role.getRoleName(), tPrivilege);
+      }
+      return;
+    }
+    // Renaming privilege
     MSentryPrivilege parent = getMSentryPrivilege(tPrivilege, pm);
+    if (parent != null) {
+      // When all the roles associated with that privilege are revoked, privilege
+      // will be removed from the database.
+      // parent is an JDO object which is associated with privilege data in the database.
+      // When the associated row is deleted in database, JDO should be not be
+      // dereferenced. If object has to be used even after that it should have been detached.
+      parent = pm.detachCopy(parent);
+    }
     for (MSentryRole role : roleSet) {
       // 1. get privilege and child privileges
-      Set<MSentryPrivilege> privilegeGraph = Sets.newHashSet();
+      Collection<MSentryPrivilege> privilegeGraph = new HashSet<>();
       if (parent != null) {
-
-        //  Parent privilege object is used after revoking.
-        //  If the privilege was associated to only role which is revoked,
-        //  privilege object should not be used. It is safe to insert
-        //  a copy of the parent object in the privilegeGraph
-        privilegeGraph.add(convertToMSentryPrivilege(convertToTSentryPrivilege(parent)));
+        privilegeGraph.add(parent);
         populateChildren(pm, Sets.newHashSet(role.getRoleName()), parent, privilegeGraph);
       } else {
         populateChildren(pm, Sets.newHashSet(role.getRoleName()), convertToMSentryPrivilege(tPrivilege),
-            privilegeGraph);
+          privilegeGraph);
       }
       // 2. revoke privilege and child privileges
       alterSentryRoleRevokePrivilegeCore(pm, role.getRoleName(), tPrivilege);
       // 3. add new privilege and child privileges with new tableName
-      if (newTPrivilege != null) {
-        for (MSentryPrivilege m : privilegeGraph) {
-          TSentryPrivilege t = convertToTSentryPrivilege(m);
-          if (newTPrivilege.getPrivilegeScope().equals(PrivilegeScope.DATABASE.name())) {
-            t.setDbName(newTPrivilege.getDbName());
-          } else if (newTPrivilege.getPrivilegeScope().equals(PrivilegeScope.TABLE.name())) {
-            t.setTableName(newTPrivilege.getTableName());
-          }
-          alterSentryRoleGrantPrivilegeCore(pm, role.getRoleName(), t);
+      for (MSentryPrivilege mPriv : privilegeGraph) {
+        TSentryPrivilege tPriv = convertToTSentryPrivilege(mPriv);
+        if (newTPrivilege.getPrivilegeScope().equals(PrivilegeScope.DATABASE.name())) {
+          tPriv.setDbName(newTPrivilege.getDbName());
+        } else if (newTPrivilege.getPrivilegeScope().equals(PrivilegeScope.TABLE.name())) {
+          tPriv.setTableName(newTPrivilege.getTableName());
         }
+        alterSentryRoleGrantPrivilegeCore(pm, role.getRoleName(), tPriv);
       }
     }
   }
