@@ -15,6 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.sentry.hdfs;
 
 import java.util.*;
@@ -25,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.AclEntry;
@@ -39,6 +41,8 @@ import com.google.common.base.Preconditions;
 public class SentryAuthorizationInfo implements Runnable {
   private static final Logger LOG =
       LoggerFactory.getLogger(SentryAuthorizationInfo.class);
+
+  private static final String SENTRY_AUTHORIZATION_INFO_THREAD_NAME = "sentry-auth-info-refresher";
 
   private SentryUpdater updater;
   private volatile UpdateableAuthzPaths authzPaths;
@@ -83,12 +87,15 @@ public class SentryAuthorizationInfo implements Runnable {
           SentryAuthorizationConstants.CACHE_REFRESH_RETRY_WAIT_KEY,
           SentryAuthorizationConstants.CACHE_REFRESH_RETRY_WAIT_DEFAULT);
 
-      LOG.debug("Sentry authorization will enforced in the following HDFS " +
-          "locations: [{}]", StringUtils.arrayToString(newPathPrefixes));
+      if (LOG.isDebugEnabled()) {
+        LOG.debug(
+            "Sentry authorization will enforced in the following HDFS locations: [{}]",
+            StringUtils.arrayToString(newPathPrefixes));
+      }
       setPrefixPaths(newPathPrefixes);
-      LOG.debug("Refresh interval [{}]ms, retry wait [{}], stale threshold " +
-              "[{}]ms", new Object[] 
-          {refreshIntervalMillisec, retryWaitMillisec, staleThresholdMillisec});
+      LOG.debug("Refresh interval [{}]ms, retry wait [{}]",
+          refreshIntervalMillisec, retryWaitMillisec);
+      LOG.debug("stale threshold [{}]ms", staleThresholdMillisec);
 
       authzPaths = new UpdateableAuthzPaths(newPathPrefixes);
       authzPermissions = new UpdateableAuthzPermissions();
@@ -131,18 +138,19 @@ public class SentryAuthorizationInfo implements Runnable {
           updates.getPathUpdates(), authzPaths);
       UpdateableAuthzPermissions newAuthzPerms = processUpdates(
           updates.getPermUpdates(), authzPermissions);
-      // If there were any FULL updates the returned instance would be
-      // different
+
+      // processUpdates() should return different newAuthzPaths and newAuthzPerms object references
+      // if FULL updates were fetched from the Sentry server, otherwise, the same authzPaths and authzPermissions
+      // objects will be returned.
       if (newAuthzPaths != authzPaths || newAuthzPerms != authzPermissions) {
         lock.writeLock().lock();
         try {
-          LOG.debug("FULL Updated paths seq Num [old="
-              + authzPaths.getLastUpdatedSeqNum() + "], [new="
-              + newAuthzPaths.getLastUpdatedSeqNum() + "]");
+          LOG.debug(String.format("FULL Updated paths seq Num [old=%d], [new=%d] img Num [old=%d], [new=%d]",
+              authzPaths.getLastUpdatedSeqNum(), newAuthzPaths.getLastUpdatedSeqNum(),
+              authzPaths.getLastUpdatedImgNum(), newAuthzPaths.getLastUpdatedImgNum()));
           authzPaths = newAuthzPaths;
-          LOG.debug("FULL Updated perms seq Num [old="
-              + authzPermissions.getLastUpdatedSeqNum() + "], [new="
-              + newAuthzPerms.getLastUpdatedSeqNum() + "]");
+          LOG.debug(String.format("FULL Updated perms seq Num [old=%d], [new=%d]",
+              authzPermissions.getLastUpdatedSeqNum(), newAuthzPerms.getLastUpdatedSeqNum()));
           authzPermissions = newAuthzPerms;
         } finally {
           lock.writeLock().unlock();
@@ -160,22 +168,25 @@ public class SentryAuthorizationInfo implements Runnable {
     V newUpdateable = updateable;
     if (!updates.isEmpty()) {
       if (updates.get(0).hasFullImage()) {
-        LOG.debug("Process Update : FULL IMAGE "
-            + "[" + newUpdateable.getClass() + "]"
-            + "[" + updates.get(0).getSeqNum() + "]");
+        LOG.debug(String.format("Process Update : FULL IMAGE [%s][%d][%d]",
+            newUpdateable.getClass().getName(),
+            updates.get(0).getSeqNum(),
+            updates.get(0).getImgNum()));
         newUpdateable = (V)newUpdateable.updateFull(updates.remove(0));
       }
       // Any more elements ?
       if (!updates.isEmpty()) {
-        LOG.debug("Process Update : More updates.. "
-            + "[" + newUpdateable.getClass() + "]"
-            + "[" + newUpdateable.getLastUpdatedSeqNum() + "]"
-            + "[" + updates.size() + "]");
+        LOG.debug(String.format("Process Update : More updates.. [%s][%d][%d][%d]",
+            newUpdateable.getClass().getName(),
+            newUpdateable.getLastUpdatedSeqNum(),
+            newUpdateable.getLastUpdatedImgNum(),
+            updates.size()));
         newUpdateable.updatePartial(updates, lock);
       }
-      LOG.debug("Process Update : Finished updates.. "
-          + "[" + newUpdateable.getClass() + "]"
-          + "[" + newUpdateable.getLastUpdatedSeqNum() + "]");
+      LOG.debug(String.format("Process Update : Finished updates.. [%s][%d][%d]",
+          newUpdateable.getClass().getName(),
+          newUpdateable.getLastUpdatedSeqNum(),
+          newUpdateable.getLastUpdatedImgNum()));
     }
     return newUpdateable;
   }
@@ -218,17 +229,11 @@ public class SentryAuthorizationInfo implements Runnable {
       if (!success) {
         waitUntil = System.currentTimeMillis() + retryWaitMillisec;
       }
-      executor = Executors.newSingleThreadScheduledExecutor(
-          new ThreadFactory() {
-            @Override
-            public Thread newThread(Runnable r) {
-              Thread t = new Thread(r, SentryAuthorizationInfo.class.getName() +
-                  "-refresher");
-              t.setDaemon(true);
-              return t;
-            }
-          }
-      );
+      ThreadFactory sentryAuthInfoRefresherThreadFactory = new ThreadFactoryBuilder()
+          .setNameFormat(SENTRY_AUTHORIZATION_INFO_THREAD_NAME)
+          .setDaemon(true)
+          .build();
+      executor = Executors.newSingleThreadScheduledExecutor(sentryAuthInfoRefresherThreadFactory);
       executor.scheduleWithFixedDelay(this, refreshIntervalMillisec, 
           refreshIntervalMillisec, TimeUnit.MILLISECONDS);
     }
@@ -264,7 +269,7 @@ public class SentryAuthorizationInfo implements Runnable {
   public boolean isManaged(String[] pathElements) {
     return isUnderPrefix(pathElements);
   }
-  
+
   public boolean doesBelongToAuthzObject(String[] pathElements) {
     lock.readLock().lock();
     try {
@@ -292,12 +297,12 @@ public class SentryAuthorizationInfo implements Runnable {
       // Apparently setFAcl throws error if 'group::---' is not present
       AclEntry noGroup = AclEntry.parseAclEntry("group::---", true);
 
-      Set<AclEntry> retSet = new HashSet<AclEntry>();
+      Set<AclEntry> retSet = new HashSet<>();
       retSet.add(noGroup);
 
       if (authzObjs == null) {
-        retSet.addAll(Collections.EMPTY_LIST);
-        return new ArrayList<AclEntry>(retSet);
+        retSet.addAll(Collections.<AclEntry>emptyList());
+        return new ArrayList<>(retSet);
       }
 
       // No duplicate acls should be added.
@@ -305,7 +310,7 @@ public class SentryAuthorizationInfo implements Runnable {
         retSet.addAll(authzPermissions.getAcls(authzObj));
       }
 
-      return new ArrayList<AclEntry>(retSet);
+      return new ArrayList<>(retSet);
     } finally {
       lock.readLock().unlock();
     }

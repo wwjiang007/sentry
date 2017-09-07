@@ -32,7 +32,7 @@ import org.apache.sentry.core.model.sqoop.SqoopActionConstant;
 import org.apache.sentry.core.model.sqoop.SqoopActionFactory;
 import org.apache.sentry.core.model.sqoop.SqoopPrivilegeModel;
 import org.apache.sentry.policy.common.PolicyEngine;
-import org.apache.sentry.core.common.utils.AuthorizationComponent;
+import org.apache.sentry.provider.common.AuthorizationComponent;
 import org.apache.sentry.provider.common.AuthorizationProvider;
 import org.apache.sentry.provider.common.ProviderBackend;
 import org.apache.sentry.provider.common.ProviderBackendContext;
@@ -149,7 +149,7 @@ public class SqoopAuthBinding {
    * @param action
    * @return true or false
    */
-  public boolean authorize(Subject subject, MPrivilege privilege) {
+  public boolean authorize(Subject subject, MPrivilege privilege) throws SentryUserException {
     List<Authorizable> authorizables = toAuthorizable(privilege.getResource());
     if (!hasServerInclude(authorizables)) {
       authorizables.add(0, sqoopServer);
@@ -408,9 +408,7 @@ public class SqoopAuthBinding {
   }
 
   private <T> T execute(Command<T> cmd) throws SqoopException {
-    SentryGenericServiceClient client = null;
-    try {
-      client = getClient();
+    try (SentryGenericServiceClient client = getClient()){
       return cmd.run(client);
     } catch (SentryUserException ex) {
       String msg = "Unable to excute command on sentry server: " + ex.getMessage();
@@ -420,10 +418,6 @@ public class SqoopAuthBinding {
       String msg = "Unable to obtain client:" + ex.getMessage();
       LOG.error(msg, ex);
       throw new SqoopException(SecurityError.AUTH_0014, msg, ex);
-    } finally {
-      if (client != null) {
-        client.close();
-      }
     }
   }
 }

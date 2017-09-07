@@ -40,9 +40,8 @@ import org.apache.sentry.provider.db.generic.service.thrift.SentryGenericService
 import org.apache.sentry.provider.db.generic.service.thrift.SentryGenericServiceClientFactory;
 import org.apache.sentry.provider.db.generic.service.thrift.TAuthorizable;
 import org.apache.sentry.provider.db.generic.service.thrift.TSentryPrivilege;
-import org.apache.sentry.provider.db.service.persistent.SentryStore;
 import org.apache.sentry.provider.file.LocalGroupResourceAuthorizationProvider;
-import org.apache.sentry.core.common.utils.PolicyFile;
+import org.apache.sentry.provider.file.PolicyFile;
 import org.apache.sentry.service.thrift.SentryService;
 import org.apache.sentry.service.thrift.SentryServiceFactory;
 import org.apache.sentry.service.thrift.ServiceConstants.ClientConfig;
@@ -115,7 +114,6 @@ public class AbstractSqoopSentryTestBase {
   }
 
   public static void setupConf() throws Exception {
-    SentryStore.resetSentryStore();
     baseDir = createTempDir();
     sqoopDir = new File(baseDir, "sqoop");
     dbDir = new File(baseDir, "sentry_policy_db");
@@ -199,19 +197,14 @@ public class AbstractSqoopSentryTestBase {
   }
 
   public static void setAdminPrivilege() throws Exception {
-    SentryGenericServiceClient sentryClient = null;
-    try {
-      /** grant all privilege to admin user */
-      sentryClient = SentryGenericServiceClientFactory.create(getClientConfig());
+    try (SentryGenericServiceClient sentryClient =
+                 SentryGenericServiceClientFactory.create(getClientConfig())){
+      // grant all privilege to admin user
       sentryClient.createRoleIfNotExist(ADMIN_USER, ADMIN_ROLE, COMPONENT);
       sentryClient.addRoleToGroups(ADMIN_USER, ADMIN_ROLE, COMPONENT, Sets.newHashSet(ADMIN_GROUP));
       sentryClient.grantPrivilege(ADMIN_USER, ADMIN_ROLE, COMPONENT,
           new TSentryPrivilege(COMPONENT, SQOOP_SERVER_NAME, new ArrayList<TAuthorizable>(),
               SqoopActionConstant.ALL));
-    } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
     }
   }
 

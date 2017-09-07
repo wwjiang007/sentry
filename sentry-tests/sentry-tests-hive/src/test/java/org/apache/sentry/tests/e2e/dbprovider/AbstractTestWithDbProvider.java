@@ -26,12 +26,11 @@ import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.curator.test.TestingServer;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.sentry.binding.hive.SentryHiveAuthorizationTaskFactoryImpl;
 import org.apache.sentry.provider.db.SimpleDBProviderBackend;
-import org.apache.sentry.core.common.utils.PolicyFile;
+import org.apache.sentry.provider.file.PolicyFile;
 import org.apache.sentry.service.thrift.SentryService;
 import org.apache.sentry.service.thrift.SentryServiceFactory;
 import org.apache.sentry.service.thrift.ServiceConstants.ClientConfig;
@@ -42,8 +41,6 @@ import org.apache.sentry.tests.e2e.hive.StaticUserGroup;
 import org.apache.sentry.tests.e2e.hive.hiveserver.HiveServerFactory;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
-
-import static org.junit.Assume.assumeNotNull;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
@@ -61,9 +58,6 @@ public abstract class AbstractTestWithDbProvider extends AbstractTestWithHiveSer
   private static PolicyFile policyFile;
   private static File policyFilePath;
   protected static Context context;
-
-  protected static boolean haEnabled;
-  private static TestingServer zkServer;
 
   @BeforeClass
   public static void setupTest() throws Exception {
@@ -89,13 +83,7 @@ public abstract class AbstractTestWithDbProvider extends AbstractTestWithHiveSer
     policyFilePath = new File(Files.createTempDir(), "sentry-policy-file.ini");
     properties.put(ServerConfig.SENTRY_STORE_GROUP_MAPPING_RESOURCE,
         policyFilePath.getPath());
-    if (haEnabled) {
-      zkServer = new TestingServer();
-      zkServer.start();
-      properties.put(ServerConfig.SENTRY_HA_ENABLED, "true");
-      properties.put(ServerConfig.SENTRY_HA_ZOOKEEPER_NAMESPACE, "sentry-test");
-      properties.put(ServerConfig.SENTRY_HA_ZOOKEEPER_QUORUM, zkServer.getConnectString());
-    }
+
     for (Map.Entry<String, String> entry : properties.entrySet()) {
       conf.set(entry.getKey(), entry.getValue());
     }
@@ -107,7 +95,7 @@ public abstract class AbstractTestWithDbProvider extends AbstractTestWithHiveSer
       properties.put(ClientConfig.SERVER_RPC_PORT,
           String.valueOf(server.getAddress().getPort()));
     }
-    assumeNotNull(context);
+
     context = AbstractTestWithHiveServer.createContext(properties);
     policyFile
         .setUserGroupMapping(StaticUserGroup.getStaticMapping())
@@ -128,9 +116,6 @@ public abstract class AbstractTestWithDbProvider extends AbstractTestWithHiveSer
     }
     if (dbDir != null) {
       FileUtils.deleteQuietly(dbDir);
-    }
-    if (zkServer != null) {
-      zkServer.stop();
     }
   }
 

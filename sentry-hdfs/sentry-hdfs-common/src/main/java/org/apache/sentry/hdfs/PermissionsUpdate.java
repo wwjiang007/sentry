@@ -18,13 +18,15 @@
 package org.apache.sentry.hdfs;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.LinkedList;
 
 import org.apache.sentry.hdfs.service.thrift.TPermissionsUpdate;
 import org.apache.sentry.hdfs.service.thrift.TPrivilegeChanges;
 import org.apache.sentry.hdfs.service.thrift.TRoleChanges;
+import org.apache.sentry.hdfs.service.thrift.sentry_hdfs_serviceConstants;
+import org.apache.thrift.TException;
 
 public class PermissionsUpdate implements Updateable.Update {
 
@@ -61,6 +63,11 @@ public class PermissionsUpdate implements Updateable.Update {
   }
 
   @Override
+  public long getImgNum() {
+    return sentry_hdfs_serviceConstants.UNUSED_PATH_UPDATE_IMG_NUM;
+  }
+
+  @Override
   public boolean hasFullImage() {
     return tPermUpdate.isHasfullImage();
   }
@@ -79,21 +86,21 @@ public class PermissionsUpdate implements Updateable.Update {
     if (tPermUpdate.getRoleChanges().containsKey(role)) {
       return tPermUpdate.getRoleChanges().get(role);
     }
-    TRoleChanges roleUpdate = new TRoleChanges(role, new LinkedList<String>(),
-        new LinkedList<String>());
+    TRoleChanges roleUpdate = new TRoleChanges(role, new ArrayList<String>(),
+        new ArrayList<String>());
     tPermUpdate.getRoleChanges().put(role, roleUpdate);
     return roleUpdate;
   }
 
-  public Collection<TRoleChanges> getRoleUpdates() {
+  Collection<TRoleChanges> getRoleUpdates() {
     return tPermUpdate.getRoleChanges().values();
   }
 
-  public Collection<TPrivilegeChanges> getPrivilegeUpdates() {
+  Collection<TPrivilegeChanges> getPrivilegeUpdates() {
     return tPermUpdate.getPrivilegeChanges().values();
   }
 
-  public TPermissionsUpdate toThrift() {
+  TPermissionsUpdate toThrift() {
     return tPermUpdate;
   }
 
@@ -106,4 +113,41 @@ public class PermissionsUpdate implements Updateable.Update {
   public void deserialize(byte[] data) throws IOException {
     ThriftSerializer.deserialize(tPermUpdate, data);
   }
+
+  @Override
+  public void JSONDeserialize(String update) throws TException {
+    ThriftSerializer.deserializeFromJSON(tPermUpdate, update);
+  }
+
+  @Override
+  public String JSONSerialize() throws TException {
+    return ThriftSerializer.serializeToJSON(tPermUpdate);
+  }
+
+  @Override
+  public int hashCode() {
+    return (tPermUpdate == null) ? 0 : tPermUpdate.hashCode();
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (obj == null) {
+      return false;
+    }
+
+    if (this == obj) {
+      return true;
+    }
+
+    if (getClass() != obj.getClass()) {
+      return false;
+    }
+
+    PermissionsUpdate other = (PermissionsUpdate) obj;
+    if (tPermUpdate == null) {
+      return other.tPermUpdate == null;
+    }
+    return tPermUpdate.equals(other.tPermUpdate);
+  }
+
 }

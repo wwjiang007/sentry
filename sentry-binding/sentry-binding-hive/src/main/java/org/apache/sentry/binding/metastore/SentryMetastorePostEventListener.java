@@ -50,13 +50,21 @@ import org.apache.sentry.service.thrift.ServiceConstants.ServerConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+
+/**
+ * SentryMetastorePostEventListener class is HMS plugin for listening to
+ * all DDL events and deliver those events to Sentry server. This class
+ * sends all DDL events to the Sentry server through thrift API.
+ *
+ * In case any actual event fails, skipping deliver the event to Sentry server.
+ */
 public class SentryMetastorePostEventListener extends MetaStoreEventListener {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(SentryMetastoreListenerPlugin.class);
   private final HiveAuthzConf authzConf;
   private final Server server;
 
-  protected List<SentryMetastoreListenerPlugin> sentryPlugins = new ArrayList<SentryMetastoreListenerPlugin>();
+  private List<SentryMetastoreListenerPlugin> sentryPlugins = new ArrayList<SentryMetastoreListenerPlugin>();
 
   public SentryMetastorePostEventListener(Configuration config) {
     super(config);
@@ -70,15 +78,14 @@ public class SentryMetastorePostEventListener extends MetaStoreEventListener {
     authzConf = HiveAuthzConf.getAuthzConf((HiveConf)config);
     server = new Server(authzConf.get(AuthzConfVars.AUTHZ_SERVER_NAME.getVar()));
     Iterable<String> pluginClasses = ConfUtilties.CLASS_SPLITTER
-        .split(config.get(ServerConfig.SENTRY_METASTORE_PLUGINS,
-            ServerConfig.SENTRY_METASTORE_PLUGINS_DEFAULT).trim());
+        .split(config.get(ServerConfig.SENTRY_METASTORE_PLUGINS, ServerConfig.SENTRY_METASTORE_PLUGINS_DEFAULT).trim());
 
     try {
       for (String pluginClassStr : pluginClasses) {
         Class<?> clazz = config.getClassByName(pluginClassStr);
         if (!SentryMetastoreListenerPlugin.class.isAssignableFrom(clazz)) {
-          throw new IllegalArgumentException("Class ["
-              + pluginClassStr + "] is not a "
+          throw new IllegalArgumentException("Class \\"
+              + pluginClassStr + "\\ is not a "
               + SentryMetastoreListenerPlugin.class.getName());
         }
         SentryMetastoreListenerPlugin plugin = (SentryMetastoreListenerPlugin) clazz
@@ -87,7 +94,7 @@ public class SentryMetastorePostEventListener extends MetaStoreEventListener {
         sentryPlugins.add(plugin);
       }
     } catch (Exception e) {
-      LOGGER.error("Could not initialize Plugin !!", e);
+      LOGGER.error("Could not initialize HMS Plugin: SentryMetastorePostEventListener !!", e);
       throw new RuntimeException(e);
     }
   }
@@ -188,8 +195,7 @@ public class SentryMetastorePostEventListener extends MetaStoreEventListener {
 
     // don't sync paths/privileges if the operation has failed
     if (!dbEvent.getStatus()) {
-      LOGGER.debug("Skip syncing paths/privileges with Sentry server for onDropDatabase event," +
-        " since the operation failed. \n");
+      LOGGER.debug("Skip syncing paths/privileges with Sentry server for onDropDatabase event," + " since the operation failed. \n");
       return;
     }
 
@@ -274,8 +280,7 @@ public class SentryMetastorePostEventListener extends MetaStoreEventListener {
 
     // don't sync path if the operation has failed
     if (!partitionEvent.getStatus()) {
-      LOGGER.debug("Skip syncing path with Sentry server for onAddPartition event," +
-        " since the operation failed. \n");
+      LOGGER.debug("Skip syncing path with Sentry server for onAddPartition event," + " since the operation failed. \n");
       return;
     }
 
@@ -359,11 +364,12 @@ public class SentryMetastorePostEventListener extends MetaStoreEventListener {
       throws SentryUserException, IOException, MetaException {
     String requestorUserName = UserGroupInformation.getCurrentUser()
         .getShortUserName();
-    SentryPolicyServiceClient sentryClient = getSentryServiceClient();
-    sentryClient.dropPrivileges(requestorUserName, authorizableTable);
-
-    // Close the connection after dropping privileges is done.
-    sentryClient.close();
+    try (SentryPolicyServiceClient sentryClient = SentryServiceClientFactory.create(authzConf)) {
+      sentryClient.dropPrivileges(requestorUserName, authorizableTable);
+    } catch (Exception e) {
+      throw new MetaException("Failed to connect to Sentry service "
+              + e.getMessage());
+    }
   }
 
   private void renameSentryTablePrivilege(String oldDbName, String oldTabName,
@@ -398,7 +404,11 @@ public class SentryMetastorePostEventListener extends MetaStoreEventListener {
       } finally {
 
         // Close the connection after renaming privileges is done.
-        sentryClient.close();
+        try {
+          sentryClient.close();
+        } catch (Exception e) {
+          e.printStackTrace();
+        }
       }
     }
     // The HDFS plugin needs to know if it's a path change (set location)
@@ -409,8 +419,6 @@ public class SentryMetastorePostEventListener extends MetaStoreEventListener {
   }
 
   private boolean syncWithPolicyStore(AuthzConfVars syncConfVar) {
-    return "true"
-        .equalsIgnoreCase(authzConf.get(syncConfVar.getVar(), "true"));
+    return Boolean.parseBoolean(authzConf.get(syncConfVar.getVar(), "true"));
   }
-
 }

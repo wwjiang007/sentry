@@ -42,9 +42,9 @@ import org.apache.sentry.core.model.search.Collection;
 import org.apache.sentry.core.model.search.SearchModelAction;
 import org.apache.sentry.core.model.search.SearchPrivilegeModel;
 import org.apache.sentry.policy.common.PolicyEngine;
-import org.apache.sentry.core.common.utils.AuthorizationComponent;
+import org.apache.sentry.provider.common.AuthorizationComponent;
 import org.apache.sentry.provider.common.AuthorizationProvider;
-import org.apache.sentry.core.common.service.GroupMappingService;
+import org.apache.sentry.provider.common.GroupMappingService;
 import org.apache.sentry.provider.common.HadoopGroupResourceAuthorizationProvider;
 import org.apache.sentry.provider.common.ProviderBackend;
 import org.apache.sentry.provider.common.ProviderBackendContext;
@@ -298,9 +298,7 @@ public class SolrAuthzBinding {
     if (!isSyncEnabled()) {
       return;
     }
-    SentryGenericServiceClient client = null;
-    try {
-      client = getClient();
+    try (SentryGenericServiceClient client = getClient()) {
       TSentryPrivilege tPrivilege = new TSentryPrivilege();
       tPrivilege.setComponent(AuthorizationComponent.Search);
       tPrivilege.setServiceName(authzConf.get(SENTRY_SEARCH_SERVICE_KEY,
@@ -316,10 +314,6 @@ public class SolrAuthzBinding {
           " can't delete privileges for collection " + collection);
     } catch (Exception ex) {
       throw new SentrySolrAuthorizationException("Unable to obtain client:" + ex.getMessage());
-    } finally {
-      if (client != null) {
-        client.close();
-      }
     }
   }
 }

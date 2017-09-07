@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -20,7 +20,7 @@ package org.apache.sentry.hdfs;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -32,10 +32,9 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.conf.Configuration;
 
-import com.google.common.collect.Lists;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.thrift.TException;
 
+import static org.apache.sentry.hdfs.service.thrift.sentry_hdfs_serviceConstants.UNUSED_PATH_UPDATE_IMG_NUM;
 
 /**
  * A wrapper class over the TPathsUpdate thrift generated class. Please see
@@ -43,10 +42,13 @@ import org.slf4j.LoggerFactory;
  */
 public class PathsUpdate implements Updateable.Update {
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(PathsUpdate.class);
-
   public static final String ALL_PATHS = "__ALL_PATHS__";
+
+
   private static final Configuration CONF = new Configuration();
+  private static String DEFAULT_SCHEME = FileSystem.getDefaultUri(CONF).getScheme();
+  private static final String SUPPORTED_SCHEME = "hdfs";
+
   private final TPathsUpdate tPathsUpdate;
 
   public PathsUpdate() {
@@ -58,8 +60,12 @@ public class PathsUpdate implements Updateable.Update {
   }
 
   public PathsUpdate(long seqNum, boolean hasFullImage) {
-    tPathsUpdate = new TPathsUpdate(hasFullImage, seqNum,
-        new LinkedList<TPathChanges>());
+    this(seqNum, UNUSED_PATH_UPDATE_IMG_NUM, hasFullImage);
+  }
+
+  public PathsUpdate(long seqNum, long imgNum, boolean hasFullImage) {
+    tPathsUpdate = new TPathsUpdate(hasFullImage, seqNum, new ArrayList<TPathChanges>());
+    tPathsUpdate.setImgNum(imgNum);
   }
 
   @Override
@@ -70,12 +76,12 @@ public class PathsUpdate implements Updateable.Update {
   public TPathChanges newPathChange(String authzObject) {
 
     TPathChanges pathChanges = new TPathChanges(authzObject,
-        new LinkedList<List<String>>(), new LinkedList<List<String>>());
+        new ArrayList<List<String>>(), new ArrayList<List<String>>());
     tPathsUpdate.addToPathChanges(pathChanges);
     return pathChanges;
   }
 
-  public List<TPathChanges> getPathChanges() {
+  List<TPathChanges> getPathChanges() {
     return tPathsUpdate.getPathChanges();
   }
 
@@ -89,67 +95,74 @@ public class PathsUpdate implements Updateable.Update {
     tPathsUpdate.setSeqNum(seqNum);
   }
 
+  @Override
+  public long getImgNum() {
+    return tPathsUpdate.getImgNum();
+  }
+
   public TPathsUpdate toThrift() {
     return tPathsUpdate;
   }
 
+  /**
+   * Only used for testing.
+   * @param scheme new default scheme
+   */
   @VisibleForTesting
-  public static Configuration getConfiguration() {
-    return CONF;
+  public static void setDefaultScheme(String scheme) {
+    DEFAULT_SCHEME = scheme;
   }
 
   /**
-   *
-   * @param path : Needs to be a HDFS location in the forms:
-   *             - hdfs://hostname:port/path
-   *             - hdfs:///path
-   *             - /path, in which case, scheme will be constructed from FileSystem.getDefaultURI
-   *             - URIs with non hdfs schemee will just be ignored
-   * @return Path in the form a list containing the path tree with scheme/ authority stripped off.
-   * Returns null if a non HDFS path or if path is null/empty
+   * Convert URI to path, trimming leading slash.
+   * @param path HDFS location in one of the forms:
+   * <ul>
+   *   <li>hdfs://hostname:port/path
+   *   <li>hdfs:///path
+   *   <li>/path, in which case, scheme will be constructed from FileSystem.getDefaultURI
+   *   <li>URIs with non hdfs schemee will just be ignored
+   * </ul>
+   * @return Path with scheme/ authority stripped off.
+   * Returns null if a non HDFS path or if path is null/empty.
    */
-  public static List<String> parsePath(String path) throws SentryMalformedPathException {
+  public static String parsePath(String path) throws SentryMalformedPathException {
+    if (StringUtils.isEmpty(path)) {
+      return null;
+    }
+
+    URI uri;
     try {
-      LOGGER.debug("Parsing path " + path);
-      URI uri = null;
-      if (StringUtils.isNotEmpty(path)) {
-        uri = new URI(URIUtil.encodePath(path));
-      } else {
-        String msg = "Input is empty";
-        throw new SentryMalformedPathException(msg);
-      }
-
-      String scheme = uri.getScheme();
-      if (scheme == null) {
-        // Use the default URI scheme only if the path has no scheme.
-        URI defaultUri = FileSystem.getDefaultUri(CONF);
-        scheme = defaultUri.getScheme();
-        if(scheme == null) {
-          String msg = "Scheme is missing and could not be constructed from defaultURI=" + defaultUri;
-          throw new SentryMalformedPathException(msg);
-        }
-      }
-
-      // Non-HDFS paths will be skipped.
-      if(scheme.equalsIgnoreCase("hdfs")) {
-        String uriPath = uri.getPath();
-        if(uriPath == null) {
-          throw new SentryMalformedPathException("Path is empty. uri=" + uri);
-        }
-        if(uriPath.split("^/").length < 2) {
-          throw new SentryMalformedPathException("Path part of uri does not seem right, was expecting a non empty path" +
-                  ": path = " + uriPath + ", uri=" + uri);
-        }
-        return Lists.newArrayList(uriPath.split("^/")[1].split("/"));
-      } else {
-        LOGGER.warn("Invalid FS: " + scheme +  "://; expected hdfs://");
-        return null;
-      }
+      uri = new URI(URIUtil.encodePath(path));
     } catch (URISyntaxException e) {
       throw new SentryMalformedPathException("Incomprehensible path [" + path + "]", e);
-    } catch (URIException e){
-      throw new SentryMalformedPathException("Unable to create URI: ", e);
+    } catch (URIException e) {
+      throw new SentryMalformedPathException("Unable to create URI from path[" + path + "]", e);
     }
+
+    String scheme = uri.getScheme();
+    if (scheme == null) {
+      scheme = DEFAULT_SCHEME;
+      if(scheme == null) {
+        throw new SentryMalformedPathException(
+                "Scheme is missing and could not be constructed from configuration");
+      }
+    }
+
+    // Non-HDFS paths are skipped.
+    if(!scheme.equalsIgnoreCase(SUPPORTED_SCHEME)) {
+      return null;
+    }
+
+    String uriPath = uri.getPath();
+    if(uriPath == null) {
+      throw new SentryMalformedPathException("Path is empty. uri=" + uri);
+    }
+    if (!uriPath.startsWith("/")) {
+      throw new SentryMalformedPathException("Path part of uri does not seem right, was expecting a non empty path" +
+              ": path = " + uriPath + ", uri=" + uri);
+    }
+    // Remove leading slash
+    return uriPath.substring(1);
   }
 
   @Override
@@ -160,6 +173,42 @@ public class PathsUpdate implements Updateable.Update {
   @Override
   public void deserialize(byte[] data) throws IOException {
     ThriftSerializer.deserialize(tPathsUpdate, data);
+  }
+
+  @Override
+  public void JSONDeserialize(String update) throws TException {
+    ThriftSerializer.deserializeFromJSON(tPathsUpdate, update);
+  }
+
+  @Override
+  public String JSONSerialize() throws TException {
+    return ThriftSerializer.serializeToJSON(tPathsUpdate);
+  }
+
+  @Override
+  public int hashCode() {
+    return (tPathsUpdate == null) ? 0 : tPathsUpdate.hashCode();
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (obj == null) {
+      return false;
+    }
+
+    if (this == obj) {
+      return true;
+    }
+
+    if (getClass() != obj.getClass()) {
+      return false;
+    }
+
+    PathsUpdate other = (PathsUpdate) obj;
+    if (tPathsUpdate == null) {
+      return other.tPathsUpdate == null;
+    }
+    return tPathsUpdate.equals(other.tPathsUpdate);
   }
 
 }

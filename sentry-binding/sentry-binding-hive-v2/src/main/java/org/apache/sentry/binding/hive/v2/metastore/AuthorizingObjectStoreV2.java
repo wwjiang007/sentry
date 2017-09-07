@@ -40,7 +40,7 @@ import org.apache.hadoop.hive.metastore.api.UnknownDBException;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
 import org.apache.hadoop.hive.ql.plan.HiveOperation;
 import org.apache.hadoop.hive.shims.Utils;
-import org.apache.sentry.binding.hive.HiveAuthzBindingHookBase;
+import org.apache.sentry.binding.hive.HiveAuthzBindingHookBaseV2;
 import org.apache.sentry.binding.hive.authz.HiveAuthzBinding;
 import org.apache.sentry.binding.hive.conf.HiveAuthzConf;
 import org.apache.sentry.binding.hive.conf.HiveAuthzConf.AuthzConfVars;
@@ -285,7 +285,7 @@ public class AuthorizingObjectStoreV2 extends ObjectStore {
       throws MetaException {
     if (needsAuthorization(getUserName())) {
       try {
-        return HiveAuthzBindingHookBase.filterShowDatabases(getHiveAuthzBinding(),
+        return HiveAuthzBindingHookBaseV2.filterShowDatabases(getHiveAuthzBinding(),
             dbList, HiveOperation.SHOWDATABASES, getUserName());
       } catch (SemanticException e) {
         throw new MetaException("Error getting DB list " + e.getMessage());
@@ -306,7 +306,7 @@ public class AuthorizingObjectStoreV2 extends ObjectStore {
       throws MetaException {
     if (needsAuthorization(getUserName())) {
       try {
-        return HiveAuthzBindingHookBase.filterShowTables(getHiveAuthzBinding(),
+        return HiveAuthzBindingHookBaseV2.filterShowTables(getHiveAuthzBinding(),
             tabList, HiveOperation.SHOWTABLES, getUserName(), dbName);
       } catch (SemanticException e) {
         throw new MetaException("Error getting Table list " + e.getMessage());

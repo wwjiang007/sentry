@@ -31,10 +31,11 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.sentry.service.thrift.HMSFollower;
 import org.apache.sentry.tests.e2e.hive.AbstractTestWithStaticConfiguration;
-import org.junit.After;
-import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Before;
+import org.junit.After;
 import org.junit.Test;
 
 import com.google.common.collect.Lists;
@@ -53,6 +54,8 @@ public class TestDbPrivilegeCleanupOnDrop extends
   private final static String tableName3 = "tb_3";
   private final static String tableName4 = "tb_4";
   private final static String renameTag = "_new";
+
+  static final long WAIT_FOR_NOTIFICATION_PROCESSING = 10000;
 
   @BeforeClass
   public static void setupTestStaticConfiguration() throws Exception {
@@ -73,6 +76,12 @@ public class TestDbPrivilegeCleanupOnDrop extends
     FileOutputStream to = new FileOutputStream(dataFile);
     Resources.copy(Resources.getResource(SINGLE_TYPE_DATA_FILE_NAME), to);
     to.close();
+    // Check the HMS connection only when notification log is enabled.
+    if (enableNotificationLog) {
+      while (!HMSFollower.isConnectedToHms()) {
+        Thread.sleep(1000);
+      }
+    }
   }
 
   @After
@@ -98,6 +107,9 @@ public class TestDbPrivilegeCleanupOnDrop extends
     setupDbObjects(statement); // create test DBs and Tables
     setupPrivileges(statement); // setup privileges for USER1
     dropDbObjects(statement); // drop objects
+    if (enableNotificationLog) {
+      Thread.sleep(WAIT_FOR_NOTIFICATION_PROCESSING);
+    }
     verifyPrivilegesDropped(statement); // verify privileges are removed
 
     statement.close();
@@ -134,6 +146,9 @@ public class TestDbPrivilegeCleanupOnDrop extends
     dropDbObjects(statement); // drop DB and tables
 
     setupDbObjects(statement); // recreate same DBs and tables
+    if (enableNotificationLog) {
+      Thread.sleep(WAIT_FOR_NOTIFICATION_PROCESSING);
+    }
     verifyPrivilegesDropped(statement); // verify the stale privileges removed
   }
 
@@ -151,6 +166,9 @@ public class TestDbPrivilegeCleanupOnDrop extends
     setupRoles(statement); // create required roles
     setupDbObjects(statement); // create test DBs and Tables
     setupPrivileges(statement); // setup privileges for USER1
+    if (enableNotificationLog) {
+      Thread.sleep(WAIT_FOR_NOTIFICATION_PROCESSING);
+    }
 
     // verify privileges on the created tables
     statement.execute("USE " + DB2);
@@ -161,8 +179,10 @@ public class TestDbPrivilegeCleanupOnDrop extends
         tableName2);
 
     renameTables(statement); // alter tables to rename
-
     // verify privileges removed for old tables
+    if (enableNotificationLog) {
+      Thread.sleep(WAIT_FOR_NOTIFICATION_PROCESSING);
+    }
     verifyTablePrivilegesDropped(statement);
 
     // verify privileges created for new tables
@@ -208,9 +228,15 @@ public class TestDbPrivilegeCleanupOnDrop extends
     statement = context.createStatement(connection);
     statement.execute("USE " + DB1);
     statement.execute("ALTER TABLE t1 RENAME TO t2");
+    if (enableNotificationLog) {
+      Thread.sleep(WAIT_FOR_NOTIFICATION_PROCESSING);
+    }
 
     // After rename table t1 to t2, user_role should have permission to drop t2
     statement.execute("drop table t2");
+    if (enableNotificationLog) {
+      Thread.sleep(WAIT_FOR_NOTIFICATION_PROCESSING);
+    }
     ResultSet resultSet = statement.executeQuery("SHOW GRANT ROLE user_role");
     // user_role will revoke all privilege from table t2, only remain DROP/CREATE on db_1
     assertRemainingRows(resultSet, 2);

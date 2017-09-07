@@ -132,10 +132,10 @@ public class HMSPaths implements AuthzPaths {
     private EntryType type;
     private String pathElement;
 
-    // A set of authorizable objects associated with this entry. Authorizable
-    // object should be case insensitive. The set is allocated lazily to avoid
-    // wasting memory due to empty sets.
-    private Set<String> authzObjs;
+    // A set (or single object when set size is 1) of authorizable objects associated
+    // with this entry. Authorizable object should be case insensitive. The set is
+    // allocated lazily to avoid wasting memory due to empty sets.
+    private Object authzObjs;
 
     // Path of child element to the path entry mapping, e.g. 'b' -> '/a/b'
     // This is allocated lazily to avoid wasting memory due to empty maps.
@@ -161,9 +161,9 @@ public class HMSPaths implements AuthzPaths {
      * @param parent the parent node. If not specified, this entry is a root entry.
      * @param pathElement the path element of this entry on the tree.
      * @param type entry type.
-     * @param authzObjs a set of authz objects.
+     * @param authzObjs a collection of authz objects.
      */
-    Entry(Entry parent, String pathElement, EntryType type, Set<String> authzObjs) {
+    Entry(Entry parent, String pathElement, EntryType type, Collection<String> authzObjs) {
       this.parent = parent;
       this.type = type;
       this.pathElement = pathElement.intern();
@@ -204,26 +204,42 @@ public class HMSPaths implements AuthzPaths {
 
     void removeAuthzObj(String authzObj) {
       if (authzObjs != null) {
-        authzObjs.remove(authzObj);
+        if (authzObjs instanceof Set) {
+          Set<String> authzObjsSet = (Set<String>) authzObjs;
+          authzObjsSet.remove(authzObj);
+          if (authzObjsSet.size() == 1) {
+            authzObjs = authzObjsSet.iterator().next();
+          }
+        } else if (authzObjs.equals(authzObj)){
+          authzObjs = null;
+        }
       }
     }
 
     void addAuthzObj(String authzObj) {
       if (authzObj != null) {
         if (authzObjs == null) {
-          authzObjs = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+          authzObjs = authzObj;
+        } else {
+          Set<String> authzObjsSet;
+          if (authzObjs instanceof String) {
+            if (authzObjs.equals(authzObj)) {
+              return;
+            } else {
+              authzObjs = authzObjsSet = newTreeSetWithElement((String) authzObjs);
+            }
+          } else {
+            authzObjsSet = (Set) authzObjs;
+          }
+          authzObjsSet.add(authzObj.intern());
         }
-        authzObjs.add(authzObj.intern());
       }
     }
 
-    void addAuthzObjs(Set<String> authzObjs) {
+    void addAuthzObjs(Collection<String> authzObjs) {
       if (authzObjs != null) {
-        if (this.authzObjs == null) {
-          this.authzObjs = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-        }
         for (String authzObj : authzObjs) {
-          this.authzObjs.add(authzObj.intern());
+          addAuthzObj(authzObj.intern());
         }
       }
     }
@@ -238,7 +254,77 @@ public class HMSPaths implements AuthzPaths {
 
     public String toString() {
       return String.format("Entry[fullPath: %s, type: %s, authObject: %s]",
-          getFullPath(), type, authzObjs != null ? Joiner.on(",").join(authzObjs) : "");
+          getFullPath(), type, authzObjsToString());
+    }
+
+    private String authzObjsToString() {
+      if (authzObjs == null) {
+        return "";
+      } else if (authzObjs instanceof String) {
+        return (String) authzObjs;
+      } else {
+        return Joiner.on(",").join((Set) authzObjs);
+      }
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (this == obj) {
+        return true;
+      }
+      if (obj == null) {
+        return false;
+      }
+      if (getClass() != obj.getClass()) {
+        return false;
+      }
+
+      Entry other = (Entry) obj;
+      if (parent == null) {
+        if (other.parent != null) {
+          return false;
+        }
+      } else if (!parent.equals(other.parent)) {
+        return false;
+      }
+
+      if (type == null) {
+        if (other.type != null) {
+          return false;
+        }
+      } else if (!type.equals(other.type)) {
+        return false;
+      }
+
+      if (pathElement == null) {
+        if (other.pathElement != null) {
+          return false;
+        }
+      } else if (!pathElement.equals(other.pathElement)) {
+        return false;
+      }
+
+      if (authzObjs == null) {
+        if (other.authzObjs != null) {
+          return false;
+        }
+      } else if (!authzObjs.equals(other.authzObjs)) {
+        return false;
+      }
+
+      return true;
+    }
+
+    @Override
+    public int hashCode() {
+      final int prime = 31;
+      int result = 1;
+      result = prime * result + ((parent == null) ? 0 : parent.hashCode());
+      result = prime * result + ((type == null) ? 0 : type.hashCode());
+      result = prime * result + ((pathElement == null) ? 0 : pathElement.hashCode());
+      result = prime * result + ((authzObjs == null) ? 0 : authzObjs.hashCode());
+
+      return result;
     }
 
     /**
@@ -360,9 +446,9 @@ public class HMSPaths implements AuthzPaths {
           // entry no longer maps to any authzObj, removes the
           // entry recursively.
           if (authzObjs != null) {
-            authzObjs.remove(authzObj);
+            removeAuthzObj(authzObj);
           }
-          if (authzObjs == null || authzObjs.isEmpty()) {
+          if (authzObjs == null) {
             deleteFromParent();
           }
         } else {
@@ -373,7 +459,7 @@ public class HMSPaths implements AuthzPaths {
           if (getType() == EntryType.AUTHZ_OBJECT) {
             setType(EntryType.DIR);
             if (authzObjs != null) {
-              authzObjs.remove(authzObj);
+              removeAuthzObj(authzObj);
             }
           }
         }
@@ -437,16 +523,48 @@ public class HMSPaths implements AuthzPaths {
 
     /**
      * @return the set of auth objects. The returned set should be used only
-     * for querying, not for any modifications.
+     * for querying, not for any modifications. If you just want to find out
+     * the set size or whether it's empty, use the specialized getAuthzObjsSize()
+     * and isAuthzObjsEmpty() methods that performs better.
      */
-    public Set<String> getAuthzObjs() {
-      return authzObjs != null ? authzObjs : Collections.<String>emptySet();
+    Set<String> getAuthzObjs() {
+      if (authzObjs != null) {
+        if (authzObjs instanceof Set) {
+          return (Set<String>) authzObjs;
+        } else {
+          return newTreeSetWithElement((String) authzObjs);
+        }
+      } else {
+        return Collections.<String>emptySet();
+      }
+    }
+
+    int getAuthzObjsSize() {
+      if (authzObjs != null) {
+        if (authzObjs instanceof Set) {
+          return ((Set<String>) authzObjs).size();
+        } else {
+          return 1;
+        }
+      } else {
+        return 0;
+      }
+    }
+
+    boolean isAuthzObjsEmpty() {
+      return authzObjs == null;
+    }
+
+    private Set<String> newTreeSetWithElement(String el) {
+      Set<String> result = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+      result.add(el);
+      return result;
     }
 
     public Entry findPrefixEntry(List<String> pathElements) {
       Preconditions.checkArgument(pathElements != null,
           "pathElements cannot be NULL");
-      return (getType() == EntryType.PREFIX) 
+      return (getType() == EntryType.PREFIX)
              ? this : findPrefixEntry(pathElements, 0);
     }
 
@@ -478,17 +596,17 @@ public class HMSPaths implements AuthzPaths {
         boolean isPartialMatchOk, Entry lastAuthObj) {
       Entry found = null;
       if (index == pathElements.length) {
-        if (isPartialMatchOk && getAuthzObjs().size() != 0) {
+        if (isPartialMatchOk && !isAuthzObjsEmpty()) {
           found = this;
         }
       } else {
         Entry child = getChild(pathElements[index]);
         if (child != null) {
           if (index == pathElements.length - 1) {
-            found = (child.getAuthzObjs().size() != 0) ? child : lastAuthObj;
+            found = (!child.isAuthzObjsEmpty()) ? child : lastAuthObj;
           } else {
             found = child.find(pathElements, index + 1, isPartialMatchOk,
-                (child.getAuthzObjs().size() != 0) ? child : lastAuthObj);
+                (!child.isAuthzObjsEmpty()) ? child : lastAuthObj);
           }
         } else {
           if (isPartialMatchOk) {
@@ -522,7 +640,10 @@ public class HMSPaths implements AuthzPaths {
 
   // The hive authorized objects to path entries mapping.
   // One authorized object can map to a set of path entries.
-  private Map<String, Set<Entry>> authzObjToPath;
+  private Map<String, Set<Entry>> authzObjToEntries;
+
+  public HMSPaths() {
+  }
 
   public HMSPaths(String[] pathPrefixes) {
     boolean rootPrefix = false;
@@ -542,7 +663,7 @@ public class HMSPaths implements AuthzPaths {
       }
     }
 
-    authzObjToPath = new TreeMap<String, Set<Entry>>(String.CASE_INSENSITIVE_ORDER);
+    authzObjToEntries = new TreeMap<String, Set<Entry>>(String.CASE_INSENSITIVE_ORDER);
   }
 
   void _addAuthzObject(String authzObj, List<String> authzObjPaths) {
@@ -550,7 +671,7 @@ public class HMSPaths implements AuthzPaths {
   }
 
   void addAuthzObject(String authzObj, List<List<String>> authzObjPathElements) {
-    Set<Entry> previousEntries = authzObjToPath.get(authzObj);
+    Set<Entry> previousEntries = authzObjToEntries.get(authzObj);
     Set<Entry> newEntries = new HashSet<Entry>(authzObjPathElements.size());
     for (List<String> pathElements : authzObjPathElements) {
       Entry e = root.createAuthzObjPath(pathElements, authzObj);
@@ -560,7 +681,7 @@ public class HMSPaths implements AuthzPaths {
         LOG.warn("Ignoring path, no prefix");
       }
     }
-    authzObjToPath.put(authzObj, newEntries);
+    authzObjToEntries.put(authzObj, newEntries);
     if (previousEntries != null) {
       previousEntries.removeAll(newEntries);
       if (!previousEntries.isEmpty()) {
@@ -573,7 +694,7 @@ public class HMSPaths implements AuthzPaths {
 
   void addPathsToAuthzObject(String authzObj,
       List<List<String>> authzObjPathElements, boolean createNew) {
-    Set<Entry> entries = authzObjToPath.get(authzObj);
+    Set<Entry> entries = authzObjToEntries.get(authzObj);
     if (entries != null) {
       Set<Entry> newEntries = new HashSet<Entry>(authzObjPathElements.size());
       for (List<String> pathElements : authzObjPathElements) {
@@ -610,7 +731,7 @@ public class HMSPaths implements AuthzPaths {
    */
   void deletePathsFromAuthzObject(String authzObj,
       List<List<String>> authzObjPathElements) {
-    Set<Entry> entries = authzObjToPath.get(authzObj);
+    Set<Entry> entries = authzObjToEntries.get(authzObj);
     if (entries != null) {
       Set<Entry> toDelEntries = new HashSet<Entry>(authzObjPathElements.size());
       for (List<String> pathElements : authzObjPathElements) {
@@ -631,7 +752,7 @@ public class HMSPaths implements AuthzPaths {
   }
 
   void deleteAuthzObject(String authzObj) {
-    Set<Entry> entries = authzObjToPath.remove(authzObj);
+    Set<Entry> entries = authzObjToEntries.remove(authzObj);
     if (entries != null) {
       for (Entry entry : entries) {
         entry.deleteAuthzObject(authzObj);
@@ -703,13 +824,13 @@ public class HMSPaths implements AuthzPaths {
     }
 
     // Re-write authObj from oldName to newName.
-    Set<Entry> entries = authzObjToPath.get(oldName);
+    Set<Entry> entries = authzObjToEntries.get(oldName);
     if (entries == null) {
       LOG.warn("Unexpected state in renameAuthzObject, cannot find oldName in authzObjToPath: " +
           "oldName=" + oldName + " newName=" + newName +
           " oldPath=" + oldPathElems + " newPath=" + newPathElems);
     } else {
-      authzObjToPath.put(newName, entries);
+      authzObjToEntries.put(newName, entries);
       for (Entry e : entries) {
         e.addAuthzObj(newName);
 
@@ -746,8 +867,8 @@ public class HMSPaths implements AuthzPaths {
     this.root = root;
   }
 
-  void setAuthzObjToPathMapping(Map<String, Set<Entry>> mapping) {
-    authzObjToPath = mapping;
+  void setAuthzObjToEntryMapping(Map<String, Set<Entry>> mapping) {
+    authzObjToEntries = mapping;
   }
 
   @Override

@@ -25,4 +25,7 @@ public class SentryInvalidInputException extends SentryUserException {
   public SentryInvalidInputException(String msg, String reason) {
     super(msg, reason);
   }
+  public SentryInvalidInputException(String msg, Throwable cause) {
+    super(msg, cause);
+  }
 }

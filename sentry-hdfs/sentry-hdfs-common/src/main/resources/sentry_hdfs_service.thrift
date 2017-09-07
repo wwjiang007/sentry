@@ -49,10 +49,10 @@ struct TPathEntry {
 2: required string pathElement;
 
 # The child tuple id of the Path Entry.
-4: required set<i32> children;
+4: required list<i32> children;
 
 # A set of authzObjs associated with the Path Entry.
-5: optional set<string> authzObjs;
+5: optional list<string> authzObjs;
 }
 
 struct TPathsDump {
@@ -61,11 +61,15 @@ struct TPathsDump {
 3: optional list<string> dupStringValues;
 }
 
+# Value used to specify that a path image number is not used on a request or response
+const i64 UNUSED_PATH_UPDATE_IMG_NUM = -1;
+
 struct TPathsUpdate {
 1: required bool hasFullImage;
 2: optional TPathsDump pathsDump;
 3: required i64 seqNum;
 4: required list<TPathChanges> pathChanges;
+5: optional i64 imgNum = UNUSED_PATH_UPDATE_IMG_NUM;
 }
 
 struct TPrivilegeChanges {
@@ -106,11 +110,18 @@ struct TAuthzUpdateResponse {
 2: optional list<TPermissionsUpdate> authzPermUpdate,
 }
 
+struct TAuthzUpdateRequest {
+1: required i64 permSeqNum;
+2: required i64 pathSeqNum;
+3: required i64 pathImgNum;
+}
+
 service SentryHDFSService
 {
   # HMS Path cache
   void handle_hms_notification(1:TPathsUpdate pathsUpdate);
   i64 check_hms_seq_num(1:i64 pathSeqNum);
   TAuthzUpdateResponse get_all_authz_updates_from(1:i64 permSeqNum, 2:i64 pathSeqNum);
+  TAuthzUpdateResponse get_authz_updates(1:TAuthzUpdateRequest request);
   map<string, list<string>> get_all_related_paths(1:string path, 2:bool exactMatch);
 }

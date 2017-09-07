@@ -21,7 +21,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class SentryUpdater {
+class SentryUpdater {
 
   private SentryHDFSServiceClient sentryClient;
   private final Configuration conf;
@@ -29,12 +29,12 @@ public class SentryUpdater {
 
   private static final Logger LOG = LoggerFactory.getLogger(SentryUpdater.class);
 
-  public SentryUpdater(Configuration conf, SentryAuthorizationInfo authzInfo) throws Exception {
+  SentryUpdater(Configuration conf, SentryAuthorizationInfo authzInfo) throws Exception {
     this.conf = conf;
     this.authzInfo = authzInfo;
   }
 
-  public SentryAuthzUpdate getUpdates() {
+  SentryAuthzUpdate getUpdates() {
     if (sentryClient == null) {
       try {
         sentryClient = SentryHDFSServiceClientFactory.create(conf);
@@ -46,13 +46,13 @@ public class SentryUpdater {
       }
     }
     try {
-      SentryAuthzUpdate sentryUpdates = sentryClient.getAllUpdatesFrom(
+      return sentryClient.getAllUpdatesFrom(
           authzInfo.getAuthzPermissions().getLastUpdatedSeqNum() + 1,
-          authzInfo.getAuthzPaths().getLastUpdatedSeqNum() + 1);
-      return sentryUpdates;
+          authzInfo.getAuthzPaths().getLastUpdatedSeqNum() + 1,
+          authzInfo.getAuthzPaths().getLastUpdatedImgNum());
     } catch (Exception e)  {
       sentryClient = null;
-      LOG.error("Error receiving updates from Sentry !!", e);
+      LOG.error("Error receiving updates from Sentry", e);
       return null;
     }
   }

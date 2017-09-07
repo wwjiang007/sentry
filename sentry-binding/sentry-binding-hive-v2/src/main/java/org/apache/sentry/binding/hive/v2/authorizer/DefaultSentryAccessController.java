@@ -35,7 +35,6 @@ import org.apache.hadoop.hive.ql.security.authorization.plugin.HivePrivilege;
 import org.apache.hadoop.hive.ql.security.authorization.plugin.HivePrivilegeInfo;
 import org.apache.hadoop.hive.ql.security.authorization.plugin.HivePrivilegeObject;
 import org.apache.hadoop.hive.ql.security.authorization.plugin.HiveRoleGrant;
-import org.apache.hadoop.hive.ql.session.SessionState;
 import org.apache.sentry.binding.hive.SentryOnFailureHookContext;
 import org.apache.sentry.binding.hive.SentryOnFailureHookContextImpl;
 import org.apache.sentry.binding.hive.authz.HiveAuthzBinding;
@@ -127,9 +126,7 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       String msg = "Error occurred when Sentry client creating role: " + e.getMessage();
       executeOnErrorHooks(msg, e);
     } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
+      closeClient();
     }
   }
 
@@ -150,9 +147,7 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       String msg = "Error occurred when Sentry client creating role: " + e.getMessage();
       executeOnErrorHooks(msg, e);
     } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
+      closeClient();
     }
   }
 
@@ -169,9 +164,7 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       String msg = "Error when sentryClient listRoles: " + e.getMessage();
       executeOnErrorHooks(msg, e);
     } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
+      closeClient();
     }
     return roles;
   }
@@ -243,9 +236,7 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       String msg = "Error when sentryClient listPrivilegesByRoleName: " + e.getMessage();
       executeOnErrorHooks(msg, e);
     } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
+      closeClient();
     }
     return infoList;
   }
@@ -265,9 +256,7 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       String msg = "Error when sentryClient setCurrentRole: " + e.getMessage();
       executeOnErrorHooks(msg, e);
     } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
+      closeClient();
       if (hiveAuthzBinding != null) {
         hiveAuthzBinding.close();
       }
@@ -290,9 +279,7 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       String msg = "Error when sentryClient listUserRoles: " + e.getMessage();
       executeOnErrorHooks(msg, e);
     } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
+      closeClient();
       if (hiveAuthzBinding != null) {
         hiveAuthzBinding.close();
       }
@@ -335,9 +322,7 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       String msg = "Error when sentryClient listRolesByGroupName: " + e.getMessage();
       executeOnErrorHooks(msg, e);
     } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
+      closeClient();
     }
     return hiveRoleGrants;
   }
@@ -347,7 +332,7 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
     // Apply rest of the configuration only to HiveServer2
     if (ctx.getClientType() != CLIENT_TYPE.HIVESERVER2
         || !hiveConf.getBoolVar(ConfVars.HIVE_AUTHORIZATION_ENABLED)) {
-      throw new HiveAuthzPluginException("Sentry just support for hiveserver2");
+      throw new HiveAuthzPluginException("Sentry only supports hiveserver2");
     }
   }
 
@@ -463,9 +448,7 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       String msg = "Error when sentryClient grant/revoke privilege:" + e.getMessage();
       executeOnErrorHooks(msg, e);
     } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
+      closeClient();
     }
   }
   /**
@@ -524,16 +507,20 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       String msg = "Error when sentryClient grant/revoke role:" + e.getMessage();
       executeOnErrorHooks(msg, e);
     } finally {
-      if (sentryClient != null) {
-        sentryClient.close();
-      }
+      closeClient();
     }
   }
 
   private void executeOnFailureHooks(HiveOperation hiveOp, SentryAccessDeniedException e)
       throws HiveAccessControlException {
+
+    // With Hive 2.x cmd information is not available from SessionState. More over cmd information
+    // is not used in SentryOnFailureHookContextImpl. If this information is really needed an issue
+    // should be raised with  Hive community to update HiveAccessController interface to pass
+    // HiveSemanticAnalyzerHookContext, which has cmd information. For now, empty string is used for
+    // cmd.
     SentryOnFailureHookContext hookCtx =
-        new SentryOnFailureHookContextImpl(SessionState.get().getCmd(), null, null, hiveOp, null,
+        new SentryOnFailureHookContextImpl("", null, null, hiveOp, null,
             null, null, null, authenticator.getUserName(), null, new AuthorizationException(e),
             authzConf);
     SentryAuthorizerUtil.executeOnFailureHooks(hookCtx, authzConf);
@@ -564,6 +551,14 @@ public class DefaultSentryAccessController extends SentryHiveAccessController {
       throw new HiveAuthzPluginException(msg, e);
     }
   }
-
+  private void closeClient() {
+    if (sentryClient != null) {
+      try {
+        sentryClient.close();
+      } catch (Exception e) {
+        LOG.error("Error while closing the connection with sentry server", e);
+      }
+    }
+  }
 
 }
