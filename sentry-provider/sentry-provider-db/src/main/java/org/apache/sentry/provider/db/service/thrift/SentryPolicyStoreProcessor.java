@@ -26,6 +26,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang.StringUtils;
@@ -58,8 +59,7 @@ import org.apache.sentry.service.thrift.ServiceConstants.ThriftConstants;
 import org.apache.sentry.service.thrift.Status;
 import org.apache.sentry.service.thrift.TSentryResponseStatus;
 import org.apache.thrift.TException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.log4j.Logger;
 
 import com.codahale.metrics.Timer;
 import static com.codahale.metrics.MetricRegistry.name;
@@ -76,8 +76,8 @@ import static org.apache.sentry.hdfs.Updateable.Update;
 
 @SuppressWarnings("unused")
 public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
-  private static final Logger LOGGER = LoggerFactory.getLogger(SentryPolicyStoreProcessor.class);
-  private static final Logger AUDIT_LOGGER = LoggerFactory.getLogger(Constants.AUDIT_LOGGER_NAME);
+  private static final Logger LOGGER = Logger.getLogger(SentryPolicyStoreProcessor.class);
+  private static final Logger AUDIT_LOGGER = Logger.getLogger(Constants.AUDIT_LOGGER_NAME);
 
   static final String SENTRY_POLICY_SERVICE_NAME = "SentryPolicyService";
 
@@ -1161,6 +1161,13 @@ public class SentryPolicyStoreProcessor implements SentryPolicyService.Iface {
       String msg = String.format("wait request for id %d is interrupted",
               request.getId());
       LOGGER.error(msg, e);
+      response.setId(0);
+      response.setStatus(Status.RuntimeError(msg, e));
+      Thread.currentThread().interrupt();
+    } catch (TimeoutException e) {
+      String msg = String.format("timed out wait request for id %d", request.getId());
+      LOGGER.warn(msg, e);
+      response.setId(0);
       response.setStatus(Status.RuntimeError(msg, e));
     }
     return response;

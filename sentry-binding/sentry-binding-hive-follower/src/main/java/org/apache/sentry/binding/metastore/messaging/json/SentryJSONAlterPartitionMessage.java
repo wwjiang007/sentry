@@ -18,8 +18,9 @@
 
 package org.apache.sentry.binding.metastore.messaging.json;
 
-import com.google.common.collect.ImmutableList;
-import org.apache.hive.hcatalog.messaging.json.JSONAlterPartitionMessage;
+import org.apache.hadoop.hive.metastore.api.Partition;
+import org.apache.hadoop.hive.metastore.api.Table;
+import org.apache.hadoop.hive.metastore.messaging.json.JSONAlterPartitionMessage;
 import org.codehaus.jackson.annotate.JsonProperty;
 
 import java.util.List;
@@ -33,17 +34,21 @@ public class SentryJSONAlterPartitionMessage extends JSONAlterPartitionMessage {
   private List<String> newValues;
 
   public SentryJSONAlterPartitionMessage() {
-    super("", "", "", "", ImmutableList.<String>of(), null);
   }
 
-  public SentryJSONAlterPartitionMessage(String server, String servicePrincipal,
-                                         String db, String table,
-                                         List<String> values, List<String> newValues,
-                                         Long timestamp, String oldlocation,
-                                         String newLocation) {
-    super(server, servicePrincipal, db, table, values, timestamp);
+  public SentryJSONAlterPartitionMessage(String server, String servicePrincipal, Table tableObj,
+      Partition partitionObjBefore, Partition partitionObjAfter, Long timestamp) {
+    this(server, servicePrincipal, tableObj, partitionObjBefore, partitionObjAfter, timestamp,
+        partitionObjBefore.getSd().getLocation(), partitionObjAfter.getSd().getLocation(),
+        partitionObjAfter.getValues());
+  }
+
+  public SentryJSONAlterPartitionMessage(String server, String servicePrincipal, Table tableObj,
+      Partition partitionObjBefore, Partition partitionObjAfter, Long timestamp, String oldLocation,
+      String newLocation, List<String> newValues) {
+    super(server, servicePrincipal, tableObj, partitionObjBefore, partitionObjAfter, timestamp);
     this.newLocation = newLocation;
-    this.oldLocation = oldlocation;
+    this.oldLocation = oldLocation;
     this.newValues = newValues;
   }
 

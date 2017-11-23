@@ -100,6 +100,11 @@ public class PathsUpdate implements Updateable.Update {
     return tPathsUpdate.getImgNum();
   }
 
+  @Override
+  public void setImgNum(long imgNum) {
+    tPathsUpdate.setImgNum(imgNum);
+  }
+
   public TPathsUpdate toThrift() {
     return tPathsUpdate;
   }
@@ -161,8 +166,13 @@ public class PathsUpdate implements Updateable.Update {
       throw new SentryMalformedPathException("Path part of uri does not seem right, was expecting a non empty path" +
               ": path = " + uriPath + ", uri=" + uri);
     }
-    // Remove leading slash
-    return uriPath.substring(1);
+    // Reduce multiple consecutive forward slashes to one.
+    // It's probably a rare case, so use indexOf() before expensive regex.
+    if (uriPath.indexOf("//") >= 0) {
+      uriPath = uriPath.replaceAll("//*", "/");
+    }
+    // Remove leading and trailing slashes
+    return StringUtils.strip(uriPath, "/");
   }
 
   @Override
@@ -209,6 +219,12 @@ public class PathsUpdate implements Updateable.Update {
       return other.tPathsUpdate == null;
     }
     return tPathsUpdate.equals(other.tPathsUpdate);
+  }
+
+  @Override
+  public String toString() {
+    // TPathsUpdate implements toString() perfectly; null tPathsUpdate is ok
+    return getClass().getSimpleName() + "(" + tPathsUpdate + ")";
   }
 
 }

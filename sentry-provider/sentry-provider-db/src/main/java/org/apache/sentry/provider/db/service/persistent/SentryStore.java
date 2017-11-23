@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import javax.jdo.FetchGroup;
 import javax.jdo.JDODataStoreException;
@@ -48,6 +49,7 @@ import org.apache.sentry.core.common.exception.SentryInvalidInputException;
 import org.apache.sentry.core.common.exception.SentryNoSuchObjectException;
 import org.apache.sentry.core.common.exception.SentrySiteConfigurationException;
 import org.apache.sentry.core.common.exception.SentryUserException;
+import org.apache.sentry.core.common.utils.PathUtils;
 import org.apache.sentry.core.common.utils.SentryConstants;
 import org.apache.sentry.core.model.db.AccessConstants;
 import org.apache.sentry.core.model.db.DBModelAuthorizable.AuthorizableType;
@@ -142,7 +144,7 @@ public class SentryStore {
   // is starting from 1.
   public static final long INIT_CHANGE_ID = 1L;
 
-  public static final long EMPTY_CHANGE_ID = 0L;
+  private static final long EMPTY_CHANGE_ID = 0L;
 
   public static final long EMPTY_NOTIFICATION_ID = 0L;
 
@@ -153,7 +155,10 @@ public class SentryStore {
   private static final long COUNT_VALUE_UNKNOWN = -1L;
 
   // Representation for unknown HMS notification ID
-  public static final long NOTIFICATION_UNKNOWN = -1L;
+  private static final long NOTIFICATION_UNKNOWN = -1L;
+
+  private static final String EMPTY_GRANTOR_PRINCIPAL = "--";
+
 
   private static final Set<String> ALL_ACTIONS = Sets.newHashSet(AccessConstants.ALL,
       AccessConstants.SELECT, AccessConstants.INSERT, AccessConstants.ALTER,
@@ -187,7 +192,7 @@ public class SentryStore {
    * <p>
    * Keeping it here isn't ideal but serves the purpose until we find a better home.
    */
-  private final CounterWait counterWait = new CounterWait();
+  private final CounterWait counterWait;
 
   public static Properties getDataNucleusProperties(Configuration conf)
           throws SentrySiteConfigurationException, IOException {
@@ -216,10 +221,9 @@ public class SentryStore {
     prop.setProperty(ServerConfig.JAVAX_JDO_DRIVER_NAME, driverName);
 
     /*
-     * Oracle doesn't support "repeatable-read" isolation level, so we use* "serializable" instead. This should be handled by Datanucleus, but it
-     * incorrectly states that "repeatable-read" is supported and Oracle barks
-     * at run-time. This code is a hack, but until it is fixed in Datanucleus
-     * we can't do much.
+     * Oracle doesn't support "repeatable-read" isolation level and testing
+     * showed issues with "serializable" isolation level for Oracle 12,
+     * so we use "read-committed" instead.
      *
      * JDBC URL always looks like jdbc:oracle:<drivertype>:@<database>
      *  we look at the second component.
@@ -232,9 +236,9 @@ public class SentryStore {
                     jdbcUrl.contains(oracleDb)) {
       String[] parts = jdbcUrl.split(":");
       if ((parts.length > 1) && parts[1].equals(oracleDb)) {
-        // For Oracle JDBC driver, replace "repeatable-read" with "serializable"
+        // For Oracle JDBC driver, replace "repeatable-read" with "read-committed"
         prop.setProperty(ServerConfig.DATANUCLEUS_ISOLATION_LEVEL,
-                "serializable");
+                "read-committed");
       }
     }
 
@@ -259,6 +263,12 @@ public class SentryStore {
         ServerConfig.SENTRY_VERIFY_SCHEM_VERSION,
         ServerConfig.SENTRY_VERIFY_SCHEM_VERSION_DEFAULT).equalsIgnoreCase(
         "true");
+
+    // Schema verification should be set to false only for testing.
+    // If it is set to false, appropriate datanucleus properties will be set so that
+    // database schema is automatically created. This is desirable only for running tests.
+    // Sentry uses <code>SentrySchemaTool</code> to create schema with the help of sql scripts.
+
     if (!checkSchemaVersion) {
       prop.setProperty("datanucleus.schema.autoCreateAll", "true");
       prop.setProperty("datanucleus.autoCreateSchema", "true");
@@ -267,6 +277,9 @@ public class SentryStore {
     pmf = JDOHelper.getPersistenceManagerFactory(prop);
     tm = new TransactionManager(pmf, conf);
     verifySentryStoreSchema(checkSchemaVersion);
+    long notificationTimeout = conf.getInt(ServerConfig.SENTRY_NOTIFICATION_SYNC_TIMEOUT_MS,
+            ServerConfig.SENTRY_NOTIFICATION_SYNC_TIMEOUT_DEFAULT);
+    counterWait = new CounterWait(notificationTimeout, TimeUnit.MILLISECONDS);
   }
 
   public void setPersistUpdateDeltas(boolean persistUpdateDeltas) {
@@ -328,19 +341,6 @@ public class SentryStore {
     Query query = pm.newQuery(MSentryRole.class);
     query.addExtension(LOAD_RESULTS_AT_COMMIT, "false");
     return (List<MSentryRole>) query.execute();
-  }
-
-  /**
-   * Get a group with the given name. Should be called inside transaction.
-   * @param pm Persistence Manager instance
-   * @param groupName - group name
-   * @return Single group with the given name
-     */
-  private MSentryGroup getGroup(PersistenceManager pm, String groupName) {
-    Query query = pm.newQuery(MSentryGroup.class);
-    query.setFilter("this.groupName == :groupName");
-    query.setUnique(true);
-    return (MSentryGroup) query.execute(groupName);
   }
 
   /**
@@ -603,8 +603,10 @@ public class SentryStore {
     query.setFilter("changeID <= maxChangedIdDeleted");
     query.declareParameters("long maxChangedIdDeleted");
     long numDeleted = query.deletePersistentAll(maxIDDeleted);
-    LOGGER.info(String.format("Purged %d of %s to changeID=%d",
-        numDeleted, cls.getSimpleName(), maxIDDeleted));
+    if (numDeleted > 0) {
+      LOGGER.info(String.format("Purged %d of %s to changeID=%d",
+              numDeleted, cls.getSimpleName(), maxIDDeleted));
+    }
   }
 
   /**
@@ -627,7 +629,9 @@ public class SentryStore {
     query.setFilter("notificationId <= maxNotificationIdDeleted");
     query.declareParameters("long maxNotificationIdDeleted");
     long numDeleted = query.deletePersistentAll(lastNotificationID - changesToKeep);
-    LOGGER.info("Purged {} of {}", numDeleted, MSentryHmsNotification.class.getSimpleName());
+    if (numDeleted > 0) {
+      LOGGER.info("Purged {} of {}", numDeleted, MSentryHmsNotification.class.getSimpleName());
+    }
   }
 
   /**
@@ -1759,53 +1763,82 @@ public class SentryStore {
     return convertToTSentryPrivileges(getMSentryPrivileges(roleNames, authHierarchy));
   }
 
-  private Set<MSentryRole> getMSentryRolesByGroupName(final String groupName)
-      throws Exception {
-    return tm.executeTransaction(
-        new TransactionBlock<Set<MSentryRole>>() {
-          public Set<MSentryRole> execute(PersistenceManager pm) throws Exception {
-            Set<MSentryRole> roles;
-
-            //If no group name was specified, return all roles
-            if (groupName == null) {
-              roles = new HashSet<>(getAllRoles(pm));
-            } else {
-              String trimmedGroupName = groupName.trim();
-              MSentryGroup sentryGroup = getGroup(pm, trimmedGroupName);
-              if (sentryGroup == null) {
-                throw noSuchGroup(trimmedGroupName);
-              }
-              roles = sentryGroup.getRoles();
-            }
-            for (MSentryRole role: roles) {
-              pm.retrieve(role);
-            }
-            return roles;
-          }
-        });
-  }
-
   /**
-   * Gets sentry role objects for a given groupName from the persistence layer
-   * @param groupNames : set of groupNames to look up (if null returns all
-   *                   roles for all groups)
-   * @return : Set of thrift sentry role objects
-   * @throws SentryNoSuchObjectException
+   * Return set of roles corresponding to the groups provided.<p>
+   *
+   * If groups contain a null group, return all available roles.<p>
+   *
+   * Everything is done in a single transaction so callers get a
+   * fully-consistent view of the roles, so this can be called at the same tie as
+   * some other method that modifies groups or roles.<p>
+   *
+   * <em><b>NOTE:</b> This function is performance-critical, so before you modify it, make
+   * sure to measure performance effect. It is called every time when PolicyClient
+   * (Hive or Impala) tries to get list of roles.
+   * </em>
+   *
+   * @param groupNames Set of Sentry groups. Can contain {@code null}
+   *                  in which case all roles should be returned
+   * @param checkAllGroups If false, raise SentryNoSuchObjectException
+   *                      if one of the groups is not available, otherwise
+   *                      ignore non-existent groups
+   * @return Set of TSentryRole toles corresponding to the given set of groups.
+   * @throws SentryNoSuchObjectException if one of the groups is not present and
+   * checkAllGroups is not set.
+   * @throws Exception if DataNucleus operation fails.
    */
-  public Set<TSentryRole> getTSentryRolesByGroupName(Set<String> groupNames,
-      boolean checkAllGroups) throws Exception {
-    Set<MSentryRole> roleSet = Sets.newHashSet();
-    for (String groupName : groupNames) {
-      try {
-        roleSet.addAll(getMSentryRolesByGroupName(groupName));
-      } catch (SentryNoSuchObjectException e) {
-        // if we are checking for all the given groups, then continue searching
-        if (!checkAllGroups) {
-          throw e;
-        }
-      }
+  public Set<TSentryRole> getTSentryRolesByGroupName(final Set<String> groupNames,
+                                                     final boolean checkAllGroups) throws Exception {
+    if (groupNames.isEmpty()) {
+      return Collections.emptySet();
     }
-    return convertToTSentryRoles(roleSet);
+
+    return tm.executeTransaction(
+            new TransactionBlock<Set<TSentryRole>>() {
+              @Override
+              public Set<TSentryRole> execute(PersistenceManager pm) throws Exception {
+
+                pm.setDetachAllOnCommit(false); // No need to detach objects
+
+                // Pre-allocate large sets for role names and results.
+                // roleNames is used to avoid adding the same role mutiple times into
+                // result. The result is set, but comparisons between TSentryRole objects
+                // is more expensive then String comparisons.
+                Set<String> roleNames = new HashSet<>(1024);
+                Set<TSentryRole> result = new HashSet<>(1024);
+
+                for(String group: groupNames) {
+                  if (group == null) {
+                    // Special case - return all roles
+                    List<MSentryRole> roles = getAllRoles(pm);
+                    for (MSentryRole role: roles) {
+                      result.add(convertToTSentryRole(role));
+                    }
+                    return result;
+                  }
+
+                  // Find group by name and all roles belonging to this group
+                  String trimmedGroup = group.trim();
+                  Query query = pm.newQuery(MSentryGroup.class);
+                  query.setFilter("this.groupName == :groupName");
+                  query.setUnique(true);
+                  MSentryGroup mGroup = (MSentryGroup) query.execute(trimmedGroup);
+                  if (mGroup != null) {
+                    // For each unique role found, add a new TSentryRole version of the role to result.
+                    for (MSentryRole role: mGroup.getRoles()) {
+                      String roleName = role.getRoleName();
+                      if (roleNames.add(roleName)) {
+                        result.add(convertToTSentryRole(role));
+                      }
+                    }
+                  } else if (!checkAllGroups) {
+                      throw noSuchGroup(trimmedGroup);
+                  }
+                  query.closeAll();
+                }
+                return result;
+              }
+            });
   }
 
   public Set<String> getRoleNamesForGroups(final Set<String> groups) throws Exception {
@@ -2016,9 +2049,7 @@ public class SentryStore {
   }
 
   private TSentryRole convertToTSentryRole(MSentryRole mSentryRole) {
-    TSentryRole role = new TSentryRole();
-    role.setRoleName(mSentryRole.getRoleName());
-    role.setGrantorPrincipal("--");
+    String roleName = mSentryRole.getRoleName().intern();
     Set<MSentryGroup> groups = mSentryRole.getGroups();
     Set<TSentryGroup> sentryGroups = new HashSet<>(groups.size());
     for(MSentryGroup mSentryGroup: groups) {
@@ -2026,14 +2057,11 @@ public class SentryStore {
       sentryGroups.add(group);
     }
 
-    role.setGroups(sentryGroups);
-    return role;
+    return new TSentryRole(roleName, sentryGroups, EMPTY_GRANTOR_PRINCIPAL);
   }
 
   private TSentryGroup convertToTSentryGroup(MSentryGroup mSentryGroup) {
-    TSentryGroup group = new TSentryGroup();
-    group.setGroupName(mSentryGroup.getGroupName());
-    return group;
+    return new TSentryGroup(mSentryGroup.getGroupName().intern());
   }
 
   TSentryPrivilege convertToTSentryPrivilege(MSentryPrivilege mSentryPrivilege) {
@@ -2756,11 +2784,33 @@ public class SentryStore {
       String  objName = authzToPaths.getAuthzObjName();
       // Convert path strings to list of components
       for (String path: authzToPaths.getPathStrings()) {
-        String[] pathComponents = path.split("/");
+        String[] pathComponents = PathUtils.splitPath(path);
         List<String> paths = new ArrayList<>(pathComponents.length);
         Collections.addAll(paths, pathComponents);
         pathUpdate.applyAddChanges(objName, Collections.singletonList(paths));
       }
+    }
+  }
+
+  /**
+   * Delete all stored HMS notifications starting from given ID.<p>
+   *
+   * The purpose of the function is to clean up notifications in cases
+   * were we recover from HMS notifications resets.
+   *
+   * @param pm Persistent manager instance
+   * @param id initial ID. All notifications starting from this ID and above are
+   *          removed.
+   */
+  private void deleteNotificationsSince(PersistenceManager pm, long id) {
+    Query query = pm.newQuery(MSentryHmsNotification.class);
+    query.addExtension(LOAD_RESULTS_AT_COMMIT, "false");
+    query.setFilter("notificationId >= currentNotificationId");
+    query.declareParameters("long currentNotificationId");
+    long numDeleted = query.deletePersistentAll(id);
+    if (numDeleted > 0) {
+      LOGGER.info("Purged {} notification entries starting from {}",
+              numDeleted, id);
     }
   }
 
@@ -2778,6 +2828,7 @@ public class SentryStore {
       new TransactionBlock() {
         public Object execute(PersistenceManager pm) throws Exception {
           pm.setDetachAllOnCommit(false); // No need to detach objects
+          deleteNotificationsSince(pm, notificationID + 1);
 
           // persist the notidicationID
           pm.makePersistent(new MSentryHmsNotification(notificationID));
@@ -3111,6 +3162,23 @@ public class SentryStore {
   }
 
   /**
+   * Tells if there are any records in MAuthzPathsSnapshotId
+   *
+   * @return true if there are no entries in <code>MAuthzPathsSnapshotId</code>
+   * false if there are entries
+   * @throws Exception
+   */
+  public boolean isAuthzPathsSnapshotEmpty() throws Exception {
+    return tm.executeTransactionWithRetry(
+        new TransactionBlock<Boolean>() {
+          public Boolean execute(PersistenceManager pm) throws Exception {
+            pm.setDetachAllOnCommit(false); // No need to detach objects
+            return isTableEmptyCore(pm, MAuthzPathsSnapshotId.class);
+          }
+        });
+  }
+
+  /**
    * Updates authzObj -> [Paths] mapping to replace an existing path with a new one
    * given an authzObj. As well as persist the corresponding delta path change to
    * MSentryPathChange table in a single transaction.
@@ -3197,7 +3265,7 @@ public class SentryStore {
     // objects up to the "to" record, and will not pass any unnecessary objects that are before
     // the "from" record.
     query.setRange(0, 1);
-    return ((List<MAuthzPathsMapping>) query.execute()).isEmpty();
+    return ((List<?>) query.execute()).isEmpty();
   }
 
   /**
@@ -3814,17 +3882,33 @@ public class SentryStore {
   }
 
   /**
+   * Set the notification ID of last processed HMS notification and remove all
+   * subsequent notifications stored.
+   */
+  public void setLastProcessedNotificationID(final Long notificationId) throws Exception {
+    LOGGER.debug("Persisting Last Processed Notification ID {}", notificationId);
+    tm.executeTransaction(
+      new TransactionBlock<Object>() {
+        public Object execute(PersistenceManager pm) throws Exception {
+          deleteNotificationsSince(pm, notificationId + 1);
+          return pm.makePersistent(new MSentryHmsNotification(notificationId));
+        }
+      });
+  }
+
+  /**
    * Set the notification ID of last processed HMS notification.
    */
   public void persistLastProcessedNotificationID(final Long notificationId) throws Exception {
     LOGGER.debug("Persisting Last Processed Notification ID {}", notificationId);
     tm.executeTransaction(
-      new TransactionBlock<Object>() {
-        public Object execute(PersistenceManager pm) throws Exception {
-          return pm.makePersistent(new MSentryHmsNotification(notificationId));
-        }
-      });
+            new TransactionBlock<Object>() {
+              public Object execute(PersistenceManager pm) throws Exception {
+                return pm.makePersistent(new MSentryHmsNotification(notificationId));
+              }
+            });
   }
+
   /**
    * Gets the last processed change ID for perm delta changes.
    *

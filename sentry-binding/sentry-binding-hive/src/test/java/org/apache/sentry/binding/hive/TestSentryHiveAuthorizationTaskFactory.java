@@ -22,6 +22,7 @@ import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 
+import org.apache.hadoop.hive.ql.QueryState;
 import org.junit.Assert;
 
 import org.apache.commons.io.FileUtils;
@@ -37,7 +38,6 @@ import org.apache.hadoop.hive.ql.metadata.Partition;
 import org.apache.hadoop.hive.ql.metadata.Table;
 import org.apache.hadoop.hive.ql.parse.ASTNode;
 import org.apache.hadoop.hive.ql.parse.DDLSemanticAnalyzer;
-import org.apache.hadoop.hive.ql.parse.ParseDriver;
 import org.apache.hadoop.hive.ql.parse.ParseUtils;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
 import org.apache.hadoop.hive.ql.plan.DDLWork;
@@ -70,7 +70,6 @@ public class TestSentryHiveAuthorizationTaskFactory {
   private static final String SERVER = "server1";
 
 
-  private ParseDriver parseDriver;
   private DDLSemanticAnalyzer analyzer;
   private HiveConf conf;
   private Context context;
@@ -83,6 +82,7 @@ public class TestSentryHiveAuthorizationTaskFactory {
   @Before
   public void setup() throws Exception {
     conf = new HiveConf();
+    conf.set("datanucleus.schema.autoCreateTables", "true");
     baseDir = Files.createTempDir();
     baseDir.setWritable(true, false);
     conf.setVar(HiveConf.ConfVars.SCRATCHDIR, baseDir.getAbsolutePath());
@@ -90,12 +90,19 @@ public class TestSentryHiveAuthorizationTaskFactory {
     conf.setVar(ConfVars.HIVE_AUTHORIZATION_TASK_FACTORY,
         SentryHiveAuthorizationTaskFactoryImpl.class.getName());
 
+    // This configuration avoids starting the HS2 WebUI which was causes test failures when
+    // HS2 is configured for concurrency
+    conf.setBoolVar(HiveConf.ConfVars.HIVE_IN_TEST, true);
+
+    // This configuration avoids that the HMS fails if the Metastore schema has not version
+    // information. For some reason, HMS does not set a version initially on our tests.
+    conf.setBoolVar(HiveConf.ConfVars.METASTORE_SCHEMA_VERIFICATION, false);
+
     db = Mockito.mock(Hive.class);
     table = new Table(DB, TABLE);
     partition = new Partition(table);
     context = new Context(conf);
-    parseDriver = new ParseDriver();
-    analyzer = new DDLSemanticAnalyzer(conf, db);
+    analyzer = new DDLSemanticAnalyzer(new QueryState(conf), db);
     SessionState.start(conf);
     Mockito.when(db.getTable(TABLE, false)).thenReturn(table);
     Mockito.when(db.getPartition(table, new HashMap<String, String>(), false))
@@ -486,7 +493,7 @@ public class TestSentryHiveAuthorizationTaskFactory {
   }
 
   private ASTNode parse(String command) throws Exception {
-    return ParseUtils.findRootNonNullToken(parseDriver.parse(command));
+    return ParseUtils.parse(command);
   }
 
   private DDLWork analyze(ASTNode ast) throws Exception {

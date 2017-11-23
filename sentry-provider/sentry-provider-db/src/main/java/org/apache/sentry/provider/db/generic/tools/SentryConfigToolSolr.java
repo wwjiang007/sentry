@@ -29,7 +29,7 @@ import org.apache.sentry.core.common.Action;
 import org.apache.sentry.core.common.exception.SentryConfigurationException;
 import org.apache.sentry.core.common.utils.KeyValue;
 import org.apache.sentry.core.common.utils.SentryConstants;
-import org.apache.sentry.core.model.search.SearchPrivilegeModel;
+import org.apache.sentry.core.model.solr.SolrPrivilegeModel;
 import org.apache.sentry.provider.common.ProviderBackend;
 import org.apache.sentry.provider.common.ProviderBackendContext;
 import org.apache.sentry.provider.db.generic.service.thrift.SentryGenericServiceClient;
@@ -92,7 +92,7 @@ public class SentryConfigToolSolr extends SentryConfigToolCommon {
     SimpleFileProviderBackend policyFileBackend =
         new SimpleFileProviderBackend(conf, policyFile);
     ProviderBackendContext context = new ProviderBackendContext();
-    context.setValidators(SearchPrivilegeModel.getInstance().getPrivilegeValidators());
+    context.setValidators(SolrPrivilegeModel.getInstance().getPrivilegeValidators());
     policyFileBackend.initialize(context);
     if (validate) {
       validatePolicy(policyFileBackend);
@@ -106,7 +106,7 @@ public class SentryConfigToolSolr extends SentryConfigToolCommon {
     Set<String> roles = Sets.newHashSet();
     Table<String, String, Set<String>> groupRolePrivilegeTable =
         policyFileBackend.getGroupRolePrivilegeTable();
-    SolrTSentryPrivilegeConverter converter = new SolrTSentryPrivilegeConverter(component, service, false);
+    GenericPrivilegeConverter converter = new GenericPrivilegeConverter(component, service, false);
 
     for (String groupName : groupRolePrivilegeTable.rowKeySet()) {
       for (String roleName : groupRolePrivilegeTable.columnKeySet()) {
@@ -124,7 +124,7 @@ public class SentryConfigToolSolr extends SentryConfigToolCommon {
         }
         LOGGER.info(dryRunMessage(importPolicy) + "Adding role: " + roleName.toLowerCase(Locale.US) + " to group: " + groupName);
         if (importPolicy) {
-          client.addRoleToGroups(requestorName, roleName, component, Sets.newHashSet(groupName));
+          client.grantRoleToGroups(requestorName, roleName, component, Sets.newHashSet(groupName));
         }
 
         for (String permission : privileges) {

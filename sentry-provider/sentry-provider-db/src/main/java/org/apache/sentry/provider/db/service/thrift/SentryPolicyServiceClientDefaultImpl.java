@@ -238,7 +238,7 @@ public class SentryPolicyServiceClientDefaultImpl implements SentryPolicyService
   }
 
   @Override
-  public Set<TSentryRole> listRoles(String requestorUserName)
+  public Set<TSentryRole> listAllRoles(String requestorUserName)
     throws SentryUserException {
     return listRolesByGroupName(requestorUserName, null);
   }
@@ -1063,6 +1063,19 @@ public class SentryPolicyServiceClientDefaultImpl implements SentryPolicyService
     if (transport != null) {
       transportPool.invalidateTransport(transport);
       transport = null;
+    }
+  }
+
+  public long syncNotifications(long id) throws SentryUserException {
+    TSentrySyncIDRequest request =
+        new TSentrySyncIDRequest(ThriftConstants.TSENTRY_SERVICE_VERSION_CURRENT, id);
+
+    try {
+      TSentrySyncIDResponse response = client.sentry_sync_notifications(request);
+      Status.throwIfNotOk(response.getStatus());
+      return response.getId();
+    } catch (TException e) {
+      throw new SentryUserException(THRIFT_EXCEPTION_MESSAGE, e);
     }
   }
 }

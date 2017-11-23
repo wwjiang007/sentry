@@ -18,6 +18,9 @@
 
 package org.apache.sentry.provider.db.tools;
 
+import java.util.List;
+import java.util.Set;
+
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -27,6 +30,8 @@ import org.apache.sentry.provider.db.tools.command.hive.*;
 import org.apache.sentry.service.thrift.SentryServiceClientFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.collect.Sets;
 
 /**
  * SentryShellHive is an admin tool, and responsible for the management of repository.
@@ -39,39 +44,48 @@ public class SentryShellHive extends SentryShellCommon {
   private static final Logger LOGGER = LoggerFactory.getLogger(SentryShellHive.class);
 
   public void run() throws Exception {
-    Command command = null;
 
     try(SentryPolicyServiceClient client =
                 SentryServiceClientFactory.create(getSentryConf())) {
       UserGroupInformation ugi = UserGroupInformation.getLoginUser();
       String requestorName = ugi.getShortUserName();
-
-      if (isCreateRole) {
-        command = new CreateRoleCmd(roleName);
-      } else if (isDropRole) {
-        command = new DropRoleCmd(roleName);
-      } else if (isAddRoleGroup) {
-        command = new GrantRoleToGroupsCmd(roleName, groupName);
-      } else if (isDeleteRoleGroup) {
-        command = new RevokeRoleFromGroupsCmd(roleName, groupName);
-      } else if (isGrantPrivilegeRole) {
-        command = new GrantPrivilegeToRoleCmd(roleName, privilegeStr);
-      } else if (isRevokePrivilegeRole) {
-        command = new RevokePrivilegeFromRoleCmd(roleName, privilegeStr);
-      } else if (isListRole) {
-        command = new ListRolesCmd(groupName);
-      } else if (isListPrivilege) {
-        command = new ListPrivilegesCmd(roleName);
-      }
+      ShellCommand command = new HiveShellCommand(client);
 
       // check the requestor name
       if (StringUtils.isEmpty(requestorName)) {
-        // The exception message will be recoreded in log file.
+        // The exception message will be recorded in the log file.
         throw new Exception("The requestor name is empty.");
       }
 
-      if (command != null) {
-        command.execute(client, requestorName);
+      if (isCreateRole) {
+        command.createRole(requestorName, roleName);
+      } else if (isDropRole) {
+        command.dropRole(requestorName, roleName);
+      } else if (isAddRoleGroup) {
+        Set<String> groups = Sets.newHashSet(groupName.split(SentryShellCommon.GROUP_SPLIT_CHAR));
+        command.grantRoleToGroups(requestorName, roleName, groups);
+      } else if (isDeleteRoleGroup) {
+        Set<String> groups = Sets.newHashSet(groupName.split(SentryShellCommon.GROUP_SPLIT_CHAR));
+        command.revokeRoleFromGroups(requestorName, roleName, groups);
+      } else if (isGrantPrivilegeRole) {
+        command.grantPrivilegeToRole(requestorName, roleName, privilegeStr);
+      } else if (isRevokePrivilegeRole) {
+        command.revokePrivilegeFromRole(requestorName, roleName, privilegeStr);
+      } else if (isListRole) {
+        List<String> roles = command.listRoles(requestorName, groupName);
+        for (String role : roles) {
+          System.out.println(role);
+        }
+      } else if (isListPrivilege) {
+        List<String> privileges = command.listPrivileges(requestorName, roleName);
+        for (String privilege : privileges) {
+          System.out.println(privilege);
+        }
+      } else if (isListGroup) {
+        List<String> groups = command.listGroupRoles(requestorName);
+        for (String group : groups) {
+          System.out.println(group);
+        }
       }
     }
   }

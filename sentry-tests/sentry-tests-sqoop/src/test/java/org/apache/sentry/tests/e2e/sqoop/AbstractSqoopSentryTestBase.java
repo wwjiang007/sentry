@@ -83,7 +83,7 @@ public class AbstractSqoopSentryTestBase {
   protected static final String ROLE5 = StaticUserGroupRole.ROLE_5;
 
   protected static SentryService server;
-  protected static TomcatSqoopRunner sqoopServerRunner;
+  protected static JettySqoopRunner sqoopServerRunner;
 
   protected static File baseDir;
   protected static File sqoopDir;
@@ -91,6 +91,9 @@ public class AbstractSqoopSentryTestBase {
   protected static File policyFilePath;
 
   protected static PolicyFile policyFile;
+
+  protected static String JDBC_CONNECTOR_NAME = "generic-jdbc-connector";
+  protected static String HDFS_CONNECTOR_NAME = "hdfs-connector";
 
   @BeforeClass
   public static void beforeTestEndToEnd() throws Exception {
@@ -136,7 +139,7 @@ public class AbstractSqoopSentryTestBase {
         ServerConfig.SENTRY_STORE_LOCAL_GROUP_MAPPING);
     conf.set(ServerConfig.SENTRY_STORE_GROUP_MAPPING_RESOURCE,
         policyFilePath.getPath());
-    server = new SentryServiceFactory().create(conf);
+    server = SentryServiceFactory.create(conf);
   }
 
   public static File createTempDir() {
@@ -163,7 +166,7 @@ public class AbstractSqoopSentryTestBase {
   public static void startSqoopWithSentryEnable() throws Exception {
     File sentrySitePath = new File(baseDir, "sentry-site.xml");
     getClientConfig().writeXml(new FileOutputStream(sentrySitePath));
-    sqoopServerRunner = new TomcatSqoopRunner(sqoopDir.toString(), SQOOP_SERVER_NAME,
+    sqoopServerRunner = new JettySqoopRunner(sqoopDir.toString(), SQOOP_SERVER_NAME,
         sentrySitePath.toURI().toURL().toString());
     sqoopServerRunner.start();
   }
@@ -201,7 +204,7 @@ public class AbstractSqoopSentryTestBase {
                  SentryGenericServiceClientFactory.create(getClientConfig())){
       // grant all privilege to admin user
       sentryClient.createRoleIfNotExist(ADMIN_USER, ADMIN_ROLE, COMPONENT);
-      sentryClient.addRoleToGroups(ADMIN_USER, ADMIN_ROLE, COMPONENT, Sets.newHashSet(ADMIN_GROUP));
+      sentryClient.grantRoleToGroups(ADMIN_USER, ADMIN_ROLE, COMPONENT, Sets.newHashSet(ADMIN_GROUP));
       sentryClient.grantPrivilege(ADMIN_USER, ADMIN_ROLE, COMPONENT,
           new TSentryPrivilege(COMPONENT, SQOOP_SERVER_NAME, new ArrayList<TAuthorizable>(),
               SqoopActionConstant.ALL));

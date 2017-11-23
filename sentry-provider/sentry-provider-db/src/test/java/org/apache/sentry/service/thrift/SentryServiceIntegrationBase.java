@@ -144,6 +144,7 @@ public abstract class SentryServiceIntegrationBase extends SentryMiniKdcTestcase
     if (webServerEnabled) {
       conf.set(ServerConfig.SENTRY_WEB_ENABLE, "true");
       conf.set(ServerConfig.SENTRY_WEB_PORT, String.valueOf(webServerPort));
+      conf.set(ServerConfig.SENTRY_WEB_PUBSUB_SERVLET_ENABLED, "true");
       if (webSecurity) {
         httpKeytab = new File(kdcWorkDir, "http.keytab");
         kdc.createPrincipal(httpKeytab, HTTP_PRINCIPAL);
@@ -178,7 +179,7 @@ public abstract class SentryServiceIntegrationBase extends SentryMiniKdcTestcase
     conf.set(ServerConfig.SENTRY_STORE_JDBC_URL,
         "jdbc:derby:;databaseName=" + dbDir.getPath() + ";create=true");
     conf.set(ServerConfig.SENTRY_STORE_JDBC_PASS, "dummy");
-    server = new SentryServiceFactory().create(conf);
+    server = SentryServiceFactory.create(conf);
     conf.set(ClientConfig.SERVER_RPC_ADDRESS, server.getAddress().getHostName());
     conf.set(ClientConfig.SERVER_RPC_PORT, String.valueOf(server.getAddress().getPort()));
     conf.set(ServerConfig.SENTRY_STORE_GROUP_MAPPING,
@@ -201,7 +202,7 @@ public abstract class SentryServiceIntegrationBase extends SentryMiniKdcTestcase
         @Override
         public void runTestAsSubject() throws Exception {
           if (client != null) {
-            Set<TSentryRole> tRoles = client.listRoles(ADMIN_USER);
+            Set<TSentryRole> tRoles = client.listAllRoles(ADMIN_USER);
             if (tRoles != null) {
               for (TSentryRole tRole : tRoles) {
                 client.dropRole(ADMIN_USER, tRole.getRoleName());

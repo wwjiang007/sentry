@@ -77,7 +77,7 @@ public class TestSentryConfigToolSolr extends SentryGenericServiceIntegrationBas
     Set<TSentryRole> tRoles = client.listAllRoles(requestorName, SOLR);
     for (TSentryRole tRole : tRoles) {
       String role = tRole.getRoleName();
-      Set<TSentryPrivilege> privileges = client.listPrivilegesByRoleName(
+      Set<TSentryPrivilege> privileges = client.listAllPrivilegesByRoleName(
           requestorName, role, SOLR, service);
       for (TSentryPrivilege privilege : privileges) {
         client.revokePrivilege(requestorName, role, SOLR, privilege);
@@ -133,9 +133,9 @@ public class TestSentryConfigToolSolr extends SentryGenericServiceIntegrationBas
         }
 
         // check privileges
-        SolrTSentryPrivilegeConverter convert = new SolrTSentryPrivilegeConverter(SOLR, service);
+        GenericPrivilegeConverter convert = new GenericPrivilegeConverter(SOLR, service);
         for (String role : roles) {
-          Set<TSentryPrivilege> privileges = client.listPrivilegesByRoleName(
+          Set<TSentryPrivilege> privileges = client.listAllPrivilegesByRoleName(
               requestorName, role, SOLR, service);
           Set<String> expectedPrivileges = privilegeMapping.get(role);
           assertEquals("Privilege set size doesn't match for role: " + role,
@@ -147,7 +147,7 @@ public class TestSentryConfigToolSolr extends SentryGenericServiceIntegrationBas
           }
 
           for (String expectedPrivilege : expectedPrivileges) {
-            assertTrue("Did not find expected privilege: " + expectedPrivilege,
+            assertTrue("Did not find expected privilege: " + expectedPrivilege + " in " + privilegeStrs,
                 privilegeStrs.contains(expectedPrivilege));
           }
         }

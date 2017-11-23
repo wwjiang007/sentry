@@ -74,8 +74,8 @@ public class AbstractKafkaSentryTestBase {
 
   protected static String bootstrapServers = null;
   protected static KafkaTestServer kafkaServer = null;
-  
-  private static final long CACHE_TTL_MS = 1;
+
+  private static final int CACHE_TTL_MS = 1;
   private static final int SAFETY_FACTOR = 2; // Sleep for specified times of expected time for an operation to complete.
 
   @BeforeClass
@@ -140,7 +140,7 @@ public class AbstractKafkaSentryTestBase {
         ServerConfig.SENTRY_STORE_LOCAL_GROUP_MAPPING);
     conf.set(ServerConfig.SENTRY_STORE_GROUP_MAPPING_RESOURCE,
         policyFilePath.getPath());
-    sentryServer = new SentryServiceFactory().create(conf);
+    sentryServer = SentryServiceFactory.create(conf);
   }
 
   public static File createTempDir() {
@@ -180,7 +180,7 @@ public class AbstractKafkaSentryTestBase {
     try (SentryGenericServiceClient sentryClient = getSentryClient()){
       // grant all privilege to admin user
       sentryClient.createRoleIfNotExist(ADMIN_USER, ADMIN_ROLE, COMPONENT);
-      sentryClient.addRoleToGroups(ADMIN_USER, ADMIN_ROLE, COMPONENT, Sets.newHashSet(ADMIN_GROUP));
+      sentryClient.grantRoleToGroups(ADMIN_USER, ADMIN_ROLE, COMPONENT, Sets.newHashSet(ADMIN_GROUP));
       final ArrayList<TAuthorizable> authorizables = new ArrayList<TAuthorizable>();
       Host host = new Host(InetAddress.getLocalHost().getHostName());
       authorizables.add(new TAuthorizable(host.getTypeName(), host.getName()));
@@ -204,6 +204,18 @@ public class AbstractKafkaSentryTestBase {
     }
   }
 
+  public static void assertCausedMessages(Exception e, String message1, String message2) {
+    if (e.getCause() != null) {
+      assertTrue("Expected message: " + message1 + " OR " + message2 ,
+              (e.getCause().getMessage().contains(message1) ||
+                      e.getCause().getMessage().contains(message2)));
+    } else {
+      assertTrue("Expected message: " + message1 + " OR " + message2 + ", but got: " + e.getMessage(),
+              (e.getMessage().contains(message1) ||
+                      e.getMessage().contains(message2)));
+    }
+  }
+
   private static Configuration getClientConfig() {
     Configuration conf = new Configuration();
     /** set the Sentry client configuration for Kafka Service integration */
@@ -216,8 +228,6 @@ public class AbstractKafkaSentryTestBase {
     conf.set(KafkaAuthConf.AuthzConfVars.AUTHZ_PROVIDER_BACKEND.getVar(),
         SentryGenericProviderBackend.class.getName());
     conf.set(KafkaAuthConf.AuthzConfVars.AUTHZ_PROVIDER_RESOURCE.getVar(), policyFilePath.getPath());
-    conf.setBoolean(ClientConfig.ENABLE_CACHING, true);
-    conf.setLong(ClientConfig.CACHE_TTL_MS, CACHE_TTL_MS);
     return conf;
   }
 

@@ -26,6 +26,8 @@ public class ServiceConstants {
   // number used in authz paths and permissions to request initial syncs
   static final long IMAGE_NUMBER_UPDATE_UNINITIALIZED = 0L;
 
+  static final long SEQUENCE_NUMBER_FULL_UPDATE_REQUEST = SEQUENCE_NUMBER_UPDATE_UNINITIALIZED + 1;
+
   public static class ServerConfig {
     /**
      * This configuration parameter is only meant to be used for testing purposes.
@@ -42,6 +44,7 @@ public class ServiceConstants {
     public static final String SENTRY_HDFS_SYNC_METASTORE_CACHE_MAX_TABLES_PER_RPC = "sentry.hdfs.sync.metastore.cache.max-tables-per-rpc";
     public static final int SENTRY_HDFS_SYNC_METASTORE_CACHE_MAX_TABLES_PER_RPC_DEFAULT = 100;
     static final String SENTRY_SERVICE_FULL_UPDATE_SIGNAL = "sentry.hdfs.sync.full-update-signal";
+    public static final String SENTRY_SERVICE_FULL_UPDATE_PUBSUB = "sentry.hdfs.sync.full-update-pubsub";
 
     public static final String SENTRY_HDFS_INTEGRATION_PATH_PREFIXES = "sentry.hdfs.integration.path.prefixes";
     public static final String[] SENTRY_HDFS_INTEGRATION_PATH_PREFIXES_DEFAULT =

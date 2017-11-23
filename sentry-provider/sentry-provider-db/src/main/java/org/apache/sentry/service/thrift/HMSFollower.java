@@ -18,15 +18,20 @@
 
 package org.apache.sentry.service.thrift;
 
+import org.apache.sentry.core.common.utils.PubSub;
+import org.apache.sentry.hdfs.ServiceConstants.ServerConfig;
+
+import static org.apache.sentry.binding.hive.conf.HiveAuthzConf.AuthzConfVars.AUTHZ_SERVER_NAME;
+import static org.apache.sentry.binding.hive.conf.HiveAuthzConf.AuthzConfVars.AUTHZ_SERVER_NAME_DEPRECATED;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.jdo.JDODataStoreException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.metastore.api.NotificationEvent;
-import static org.apache.sentry.binding.hive.conf.HiveAuthzConf.AuthzConfVars.AUTHZ_SERVER_NAME;
-import static org.apache.sentry.binding.hive.conf.HiveAuthzConf.AuthzConfVars.AUTHZ_SERVER_NAME_DEPRECATED;
 import org.apache.sentry.provider.db.service.persistent.PathsImage;
 import org.apache.sentry.provider.db.service.persistent.SentryStore;
 import org.apache.thrift.TException;
@@ -39,18 +44,28 @@ import org.slf4j.LoggerFactory;
  * update permissions stored in Sentry using SentryStore and also update the &lt obj,path &gt state
  * stored for HDFS-Sentry sync.
  */
-public class HMSFollower implements Runnable, AutoCloseable {
+public class HMSFollower implements Runnable, AutoCloseable, PubSub.Subscriber {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(HMSFollower.class);
+  private static final String FULL_UPDATE_TRIGGER = "FULL UPDATE TRIGGER: ";
   private static boolean connectedToHms = false;
+
   private SentryHMSClient client;
   private final Configuration authzConf;
   private final SentryStore sentryStore;
   private final NotificationProcessor notificationProcessor;
+  private boolean readyToServe;
   private final HiveNotificationFetcher notificationFetcher;
   private final boolean hdfsSyncEnabled;
+  private final AtomicBoolean fullUpdateHMS = new AtomicBoolean(false);
 
   private final LeaderStatusMonitor leaderMonitor;
+
+  /**
+   * Current generation of HMS snapshots. HMSFollower is single-threaded, so no need
+   * to protect against concurrent modification.
+   */
+  private long hmsImageId = SentryStore.EMPTY_PATHS_SNAPSHOT_ID;
 
   /**
    * Configuring Hms Follower thread.
@@ -76,6 +91,7 @@ public class HMSFollower implements Runnable, AutoCloseable {
   public HMSFollower(Configuration conf, SentryStore store, LeaderStatusMonitor leaderMonitor,
               HiveConnectionFactory hiveConnectionFactory, String authServerName) {
     LOGGER.info("HMSFollower is being initialized");
+    readyToServe = false;
     authzConf = conf;
     this.leaderMonitor = leaderMonitor;
     sentryStore = store;
@@ -89,6 +105,13 @@ public class HMSFollower implements Runnable, AutoCloseable {
     client = new SentryHMSClient(authzConf, hiveConnectionFactory);
     hdfsSyncEnabled = SentryServiceUtil.isHDFSSyncEnabledNoCache(authzConf); // no cache to test different settings for hdfs sync
     notificationFetcher = new HiveNotificationFetcher(sentryStore, hiveConnectionFactory);
+
+    // subscribe to full update notification
+    if (conf.getBoolean(ServerConfig.SENTRY_SERVICE_FULL_UPDATE_PUBSUB, false)) {
+      LOGGER.info(FULL_UPDATE_TRIGGER + "subscribing to topic " + PubSub.Topic.HDFS_SYNC_HMS.getName());
+      PubSub.getInstance().subscribe(PubSub.Topic.HDFS_SYNC_HMS, this);
+    }
+
   }
 
   @VisibleForTesting
@@ -107,6 +130,7 @@ public class HMSFollower implements Runnable, AutoCloseable {
       // Close any outstanding connections to HMS
       try {
         client.disconnect();
+        SentryStateBank.disableState(HMSFollowerState.COMPONENT,HMSFollowerState.CONNECTED);
       } catch (Exception failure) {
         LOGGER.error("Failed to close the Sentry Hms Client", failure);
       }
@@ -117,24 +141,29 @@ public class HMSFollower implements Runnable, AutoCloseable {
 
   @Override
   public void run() {
+    SentryStateBank.enableState(HMSFollowerState.COMPONENT,HMSFollowerState.STARTED);
     long lastProcessedNotificationId;
     try {
-      // Initializing lastProcessedNotificationId based on the latest persisted notification ID.
-      lastProcessedNotificationId = sentryStore.getLastProcessedNotificationID();
-    } catch (Exception e) {
-      LOGGER.error("Failed to get the last processed notification id from sentry store, "
-          + "Skipping the processing", e);
-      return;
+      try {
+        // Initializing lastProcessedNotificationId based on the latest persisted notification ID.
+        lastProcessedNotificationId = sentryStore.getLastProcessedNotificationID();
+      } catch (Exception e) {
+        LOGGER.error("Failed to get the last processed notification id from sentry store, "
+            + "Skipping the processing", e);
+        return;
+      }
+      // Wake any clients connected to this service waiting for HMS already processed notifications.
+      wakeUpWaitingClientsForSync(lastProcessedNotificationId);
+      // Only the leader should listen to HMS updates
+      if (!isLeader()) {
+        // Close any outstanding connections to HMS
+        close();
+        return;
+      }
+      syncupWithHms(lastProcessedNotificationId);
+    } finally {
+      SentryStateBank.disableState(HMSFollowerState.COMPONENT,HMSFollowerState.STARTED);
     }
-    // Wake any clients connected to this service waiting for HMS already processed notifications.
-    wakeUpWaitingClientsForSync(lastProcessedNotificationId);
-    // Only the leader should listen to HMS updates
-    if (!isLeader()) {
-      // Close any outstanding connections to HMS
-      close();
-      return;
-    }
-    syncupWithHms(lastProcessedNotificationId);
   }
 
   private boolean isLeader() {
@@ -160,6 +189,7 @@ public class HMSFollower implements Runnable, AutoCloseable {
     try {
       client.connect();
       connectedToHms = true;
+      SentryStateBank.enableState(HMSFollowerState.COMPONENT,HMSFollowerState.CONNECTED);
     } catch (Throwable e) {
       LOGGER.error("HMSFollower cannot connect to HMS!!", e);
       return;
@@ -182,6 +212,13 @@ public class HMSFollower implements Runnable, AutoCloseable {
         return;
       }
 
+      if (!readyToServe) {
+        // Allow users and/or applications who look into the Sentry console output to see
+        // when Sentry is ready to serve.
+        System.out.println("Sentry HMS support is ready");
+        readyToServe = true;
+      }
+
       // Continue with processing new notifications if no snapshots are done.
       processNotifications(notifications);
     } catch (TException e) {
@@ -198,9 +235,11 @@ public class HMSFollower implements Runnable, AutoCloseable {
   /**
    * Checks if a new full HMS snapshot request is needed by checking if:
    * <ul>
-   *   <li>No snapshots has been persisted yet.</li>
+   *   <li>Sentry HMS Notification table is EMPTY</li>
+   *   <li>HDFSSync is enabled and Sentry Authz Snapshot table is EMPTY</li>
    *   <li>The current notification Id on the HMS is less than the
    *   latest processed by Sentry.</li>
+   *   <li>Full Snapshot Signal is detected</li>
    * </ul>
    *
    * @param latestSentryNotificationId The notification Id to check against the HMS
@@ -212,10 +251,24 @@ public class HMSFollower implements Runnable, AutoCloseable {
       return true;
     }
 
+    // Once HDFS sync is enabled, and if MAuthzPathsSnapshotId
+    // table is still empty, we need to request a full snapshot
+    if(hdfsSyncEnabled && sentryStore.isAuthzPathsSnapshotEmpty()) {
+      LOGGER.debug("HDFSSync is enabled and MAuthzPathsSnapshotId table is empty. Need to request a full snapshot");
+      return true;
+    }
+
     long currentHmsNotificationId = notificationFetcher.getCurrentNotificationId();
     if (currentHmsNotificationId < latestSentryNotificationId) {
       LOGGER.info("The latest notification ID on HMS is less than the latest notification ID "
           + "processed by Sentry. Need to request a full HMS snapshot.");
+      return true;
+    }
+
+    // check if forced full update is required, reset update flag to false
+    // to only do it once per forced full update request.
+    if (fullUpdateHMS.compareAndSet(true, false)) {
+      LOGGER.info(FULL_UPDATE_TRIGGER + "initiating full HMS snapshot request");
       return true;
     }
 
@@ -269,44 +322,55 @@ public class HMSFollower implements Runnable, AutoCloseable {
   }
 
   /**
-   * Request for full snapshot and persists it if there is no snapshot available in the
-   * sentry store. Also, wakes-up any waiting clients.
+   * Request for full snapshot and persists it if there is no snapshot available in the sentry
+   * store. Also, wakes-up any waiting clients.
    *
    * @return ID of last notification processed.
    * @throws Exception if there are failures
    */
   private long createFullSnapshot() throws Exception {
     LOGGER.debug("Attempting to take full HMS snapshot");
-    PathsImage snapshotInfo = client.getFullSnapshot();
-    if (snapshotInfo.getPathImage().isEmpty()) {
-      return snapshotInfo.getId();
-    }
-
-    // Check we're still the leader before persisting the new snapshot
-    if (!isLeader()) {
-      return SentryStore.EMPTY_NOTIFICATION_ID;
-    }
-
+    Preconditions.checkState(!SentryStateBank.isEnabled(SentryServiceState.COMPONENT,
+        SentryServiceState.FULL_UPDATE_RUNNING),
+        "HMSFollower shown loading full snapshot when it should not be.");
     try {
-      LOGGER.debug("Persisting HMS path full snapshot");
+      // Set that the full update is running
+      SentryStateBank
+          .enableState(SentryServiceState.COMPONENT, SentryServiceState.FULL_UPDATE_RUNNING);
 
-      if (hdfsSyncEnabled) {
-        sentryStore.persistFullPathsImage(snapshotInfo.getPathImage(), snapshotInfo.getId());
-      } else {
-        // We need to persist latest notificationID for next poll
-        sentryStore.persistLastProcessedNotificationID(snapshotInfo.getId());
+      PathsImage snapshotInfo = client.getFullSnapshot();
+      if (snapshotInfo.getPathImage().isEmpty()) {
+        return snapshotInfo.getId();
       }
-    } catch (Exception failure) {
-      LOGGER.error("Received exception while persisting HMS path full snapshot ");
-      throw failure;
+
+      // Check we're still the leader before persisting the new snapshot
+      if (!isLeader()) {
+        return SentryStore.EMPTY_NOTIFICATION_ID;
+      }
+      try {
+        LOGGER.debug("Persisting HMS path full snapshot");
+
+        if (hdfsSyncEnabled) {
+          sentryStore.persistFullPathsImage(snapshotInfo.getPathImage(), snapshotInfo.getId());
+        } else {
+          // We need to persist latest notificationID for next poll
+          sentryStore.setLastProcessedNotificationID(snapshotInfo.getId());
+        }
+      } catch (Exception failure) {
+        LOGGER.error("Received exception while persisting HMS path full snapshot ");
+        throw failure;
+      }
+      // Wake up any HMS waiters that could have been put on hold before getting the
+      // eventIDBefore value.
+      wakeUpWaitingClientsForSync(snapshotInfo.getId());
+      // HMSFollower connected to HMS and it finished full snapshot if that was required
+      // Log this message only once
+      LOGGER.info("Sentry HMS support is ready");
+      return snapshotInfo.getId();
+    } finally {
+      SentryStateBank
+          .disableState(SentryServiceState.COMPONENT, SentryServiceState.FULL_UPDATE_RUNNING);
     }
-    // Wake up any HMS waiters that could have been put on hold before getting the
-    // eventIDBefore value.
-    wakeUpWaitingClientsForSync(snapshotInfo.getId());
-    // HMSFollower connected to HMS and it finished full snapshot if that was required
-    // Log this message only once
-    LOGGER.info("Sentry HMS support is ready");
-    return snapshotInfo.getId();
   }
 
   /**
@@ -364,7 +428,11 @@ public class HMSFollower implements Runnable, AutoCloseable {
   }
 
   /**
-   * Wakes up HMS waiters waiting for a specific event notification.
+   * Wakes up HMS waiters waiting for a specific event notification.<p>
+   *
+   * Verify that HMS image id didn't change since the last time we looked.
+   * If id did, it is possible that notifications jumped backward, so reset
+   * the counter to the current value.
    *
    * @param eventId Id of a notification
    */
@@ -374,8 +442,36 @@ public class HMSFollower implements Runnable, AutoCloseable {
     // Wake up any HMS waiters that are waiting for this ID.
     // counterWait should never be null, but tests mock SentryStore and a mocked one
     // doesn't have it.
-    if (counterWait != null) {
-      counterWait.update(eventId);
+    if (counterWait == null) {
+      return;
     }
+
+    long lastHMSSnapshotId = hmsImageId;
+    try {
+      // Read actual HMS image ID
+      lastHMSSnapshotId = sentryStore.getLastProcessedImageID();
+    } catch (Exception e) {
+      counterWait.update(eventId);
+      LOGGER.error("Failed to get the last processed HMS image id from sentry store");
+      return;
+    }
+
+    // Reset the counter if the persisted image ID is greater than current image ID
+    if (lastHMSSnapshotId > hmsImageId) {
+      counterWait.reset(eventId);
+      hmsImageId = lastHMSSnapshotId;
+    }
+
+    counterWait.update(eventId);
+  }
+
+  /**
+   * PubSub.Subscriber callback API
+   */
+  @Override
+  public void onMessage(PubSub.Topic topic, String message) {
+    Preconditions.checkArgument(topic == PubSub.Topic.HDFS_SYNC_HMS, "Unexpected topic %s instead of %s", topic, PubSub.Topic.HDFS_SYNC_HMS);
+    LOGGER.info(FULL_UPDATE_TRIGGER + "Received [{}, {}] notification", topic, message);
+    fullUpdateHMS.set(true);
   }
 }

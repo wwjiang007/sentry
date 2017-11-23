@@ -18,7 +18,19 @@
 
 package org.apache.sentry.binding.metastore.messaging.json;
 
-import org.apache.hive.hcatalog.messaging.*;
+import org.apache.hadoop.hive.metastore.messaging.AlterIndexMessage;
+import org.apache.hadoop.hive.metastore.messaging.CreateFunctionMessage;
+import org.apache.hadoop.hive.metastore.messaging.CreateIndexMessage;
+import org.apache.hadoop.hive.metastore.messaging.DropFunctionMessage;
+import org.apache.hadoop.hive.metastore.messaging.DropIndexMessage;
+import org.apache.hadoop.hive.metastore.messaging.InsertMessage;
+import org.apache.hadoop.hive.metastore.messaging.MessageDeserializer;
+import org.apache.hadoop.hive.metastore.messaging.json.JSONAlterIndexMessage;
+import org.apache.hadoop.hive.metastore.messaging.json.JSONCreateFunctionMessage;
+import org.apache.hadoop.hive.metastore.messaging.json.JSONCreateIndexMessage;
+import org.apache.hadoop.hive.metastore.messaging.json.JSONDropFunctionMessage;
+import org.apache.hadoop.hive.metastore.messaging.json.JSONDropIndexMessage;
+import org.apache.hadoop.hive.metastore.messaging.json.JSONInsertMessage;
 import org.codehaus.jackson.map.DeserializationConfig;
 import org.codehaus.jackson.map.ObjectMapper;
 
@@ -125,6 +137,89 @@ public class SentryJSONMessageDeserializer extends MessageDeserializer {
       return mapper.readValue(messageBody, SentryJSONDropPartitionMessage.class);
     } catch (Exception e) {
       throw new IllegalArgumentException("Could not construct SentryJSONDropPartitionMessage: ", e);
+    }
+  }
+
+  /**
+   * Method to de-serialize CreateFunctionMessage instance.
+   */
+  @Override
+  public CreateFunctionMessage getCreateFunctionMessage(String messageBody) {
+    // Sentry does not need this message, but it needs to be implemented so that Hive can
+    // complete the notification log for such event.
+    try {
+      return mapper.readValue(messageBody, JSONCreateFunctionMessage.class);
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Could not construct JSONCreateFunctionMessage: ", e);
+    }
+  }
+
+  /**
+   * Method to de-serialize DropFunctionMessage instance.
+   */
+  @Override
+  public DropFunctionMessage getDropFunctionMessage(String messageBody) {
+    // Sentry does not need this message, but it needs to be implemented so that Hive can
+    // complete the notification log for such event.
+    try {
+      return mapper.readValue(messageBody, JSONDropFunctionMessage.class);
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Could not construct JSONDropDatabaseMessage: ", e);
+    }
+  }
+
+  /**
+   * Method to de-serialize CreateIndexMessage instance.                                                                                                                                                   +   */
+  @Override
+  public CreateIndexMessage getCreateIndexMessage(String messageBody) {
+    // Sentry does not need this message, but it needs to be implemented so that Hive can
+    // complete the notification log for such event.
+    try {
+      return mapper.readValue(messageBody, JSONCreateIndexMessage.class);
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Could not construct JSONCreateIndexMessage: ", e);
+    }
+  }
+
+  /**
+   * Method to de-serialize DropIndexMessage instance.
+   */
+  @Override
+  public DropIndexMessage getDropIndexMessage(String messageBody) {
+    // Sentry does not need this message, but it needs to be implemented so that Hive can
+    // complete the notification log for such event.
+    try {
+      return mapper.readValue(messageBody, JSONDropIndexMessage.class);
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Could not construct JSONDropIndexMessage: ", e);
+    }
+  }
+
+  /**
+   * Method to de-serialize AlterIndexMessage instance.
+   */
+  @Override
+  public AlterIndexMessage getAlterIndexMessage(String messageBody) {
+    // Sentry does not need this message, but it needs to be implemented so that Hive can
+    // complete the notification log for such event.
+    try {
+      return mapper.readValue(messageBody, JSONAlterIndexMessage.class);
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Could not construct JSONAlterIndexMessage: ", e);
+    }
+  }
+
+  /**
+   * Method to de-serialize JSONInsertMessage instance.
+   */
+  @Override
+  public InsertMessage getInsertMessage(String messageBody) {
+    // Sentry does not need this message, but it needs to be implemented so that Hive can
+    // complete the notification log for such event.
+    try {
+      return mapper.readValue(messageBody, JSONInsertMessage.class);
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Could not construct InsertMessage", e);
     }
   }
 

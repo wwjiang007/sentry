@@ -35,6 +35,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.common.base.Preconditions;
@@ -63,6 +65,7 @@ import org.apache.hadoop.mapred.Reducer;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.sentry.binding.hive.SentryHiveAuthorizationTaskFactoryImpl;
+import org.apache.sentry.binding.hive.authz.SentryHiveAuthorizerFactory;
 import org.apache.sentry.binding.hive.conf.HiveAuthzConf;
 import org.apache.sentry.hdfs.SentryHDFSServiceClientFactory;
 import org.apache.sentry.hdfs.SentryINodeAttributesProvider;
@@ -559,6 +562,22 @@ public abstract class TestHDFSIntegrationBase {
         hiveConf.set("datanucleus.autoCreateSchema", "true");
         hiveConf.set("datanucleus.fixedDatastore", "false");
         hiveConf.set("datanucleus.autoStartMechanism", "SchemaTable");
+        hiveConf.set("datanucleus.schema.autoCreateTables", "true");
+
+        hiveConf.set(ConfVars.HIVE_AUTHORIZATION_ENABLED.varname, "true");
+        hiveConf.set(ConfVars.HIVE_AUTHORIZATION_MANAGER.varname, SentryHiveAuthorizerFactory.class.getName());
+        hiveConf.set(ConfVars.HIVE_CBO_ENABLED.varname, "false");
+        hiveConf.set(ConfVars.METASTORE_DISALLOW_INCOMPATIBLE_COL_TYPE_CHANGES.varname, "false");
+        hiveConf.set(ConfVars.HIVE_IN_TEST.varname, "true");
+
+        // Sets the hadoop temporary directory specified by the java.io.tmpdir (already set to the
+        // maven build directory to avoid writing to the /tmp directly
+        String hadoopTempDir = System.getProperty("java.io.tmpdir") + File.separator + "hadoop-tmp";
+        hiveConf.set("hadoop.tmp.dir", hadoopTempDir);
+
+        // This configuration will avoid that the HMS fails if the metastore schema has not version
+        // information. For some reason, HMS does not set a version initially on our tests.
+        hiveConf.set(ConfVars.METASTORE_SCHEMA_VERIFICATION.varname, "false");
 
         // Sets hive.metastore.authorization.storage.checks to true, so that
         // disallow the operations such as drop-partition if the user in question
@@ -567,8 +586,8 @@ public abstract class TestHDFSIntegrationBase {
         hiveConf.set("hive.metastore.authorization.storage.checks", "true");
         hiveConf.set("hive.metastore.uris", "thrift://localhost:" + hmsPort);
         hiveConf.set("hive.metastore.pre.event.listeners", "org.apache.sentry.binding.metastore.MetastoreAuthzBinding");
-        hiveConf.set("hive.metastore.event.listeners", "org.apache.sentry.binding.metastore.SentryMetastorePostEventListenerNotificationLog");
-        hiveConf.set("hcatalog.message.factory.impl.json", "org.apache.sentry.binding.metastore.messaging.json.SentryJSONMessageFactory");
+        hiveConf.set("hive.metastore.transactional.event.listeners", "org.apache.hive.hcatalog.listener.DbNotificationListener");
+        hiveConf.set("hive.metastore.event.message.factory", "org.apache.sentry.binding.metastore.messaging.json.SentryJSONMessageFactory");
         hiveConf.set("hive.security.authorization.task.factory", "org.apache.sentry.binding.hive.SentryHiveAuthorizationTaskFactoryImpl");
         hiveConf.set("hive.server2.session.hook", "org.apache.sentry.binding.hive.HiveAuthzBindingSessionHook");
         hiveConf.set("sentry.metastore.service.users", "hive");// queries made by hive user (beeline) skip meta store check
@@ -612,12 +631,15 @@ public abstract class TestHDFSIntegrationBase {
     hiveUgi.doAs(new PrivilegedExceptionAction<Void>() {
       @Override
       public Void run() throws Exception {
+        final CountDownLatch hmsStartedSignal = new CountDownLatch(1);
+
         metastore = new InternalMetastoreServer(hiveConf);
         new Thread() {
           @Override
           public void run() {
             try {
               metastore.start();
+              hmsStartedSignal.countDown();
               while (true) {
                 Thread.sleep(1000L);
               }
@@ -627,6 +649,7 @@ public abstract class TestHDFSIntegrationBase {
           }
         }.start();
 
+        hmsStartedSignal.await(30, TimeUnit.SECONDS);
         hmsClient = new HiveMetaStoreClient(hiveConf);
         startHiveServer2(retries, hiveConf);
         return null;
@@ -793,6 +816,7 @@ public abstract class TestHDFSIntegrationBase {
           properties.put(ServerConfig.RPC_ADDRESS, "localhost");
           properties.put(ServerConfig.RPC_PORT, String.valueOf(sentryPort > 0 ? sentryPort : 0));
           properties.put(ServerConfig.SENTRY_VERIFY_SCHEM_VERSION, "false");
+          properties.put("sentry.hive.server", "server1");
 
           properties.put(ServerConfig.SENTRY_STORE_GROUP_MAPPING, ServerConfig.SENTRY_STORE_LOCAL_GROUP_MAPPING);
           properties.put(ServerConfig.SENTRY_STORE_GROUP_MAPPING_RESOURCE, policyFileLocation.getPath());
@@ -841,6 +865,7 @@ public abstract class TestHDFSIntegrationBase {
     //Clean up roles
     conn = hiveServer2.createConnection("hive", "hive");
     stmt = conn.createStatement();
+    LOGGER.info("About to clear all roles");
     for( String role:roles) {
       stmt.execute("drop role " + role);
     }

@@ -44,15 +44,18 @@ import org.apache.hadoop.hive.metastore.api.NotificationEventResponse;
 import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
-import org.apache.hive.hcatalog.messaging.HCatEventMessage;
-import org.apache.hive.hcatalog.messaging.HCatEventMessage.EventType;
+import org.apache.hadoop.hive.metastore.messaging.EventMessage;
+import org.apache.hadoop.hive.metastore.messaging.EventMessage.EventType;
 import org.apache.sentry.binding.hive.conf.HiveAuthzConf;
 import org.apache.sentry.binding.hive.conf.HiveAuthzConf.AuthzConfVars;
 import org.apache.sentry.binding.metastore.messaging.json.SentryJSONMessageFactory;
+import org.apache.sentry.core.common.utils.PubSub;
 import org.apache.sentry.hdfs.UniquePathsUpdate;
 import org.apache.sentry.provider.db.service.persistent.PathsImage;
 import org.apache.sentry.provider.db.service.persistent.SentryStore;
 import org.apache.sentry.provider.db.service.thrift.TSentryAuthorizable;
+import static org.apache.sentry.hdfs.ServiceConstants.ServerConfig.SENTRY_SERVICE_FULL_UPDATE_PUBSUB;
+
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
@@ -79,6 +82,7 @@ public class TestHMSFollower {
     hiveConnectionFactory = new HiveSimpleConnectionFactory(configuration, new HiveConf());
     hiveConnectionFactory.init();
     configuration.set("sentry.hive.sync.create", "true");
+    configuration.set(SENTRY_SERVICE_FULL_UPDATE_PUBSUB, "true");
 
     // enable HDFS sync, so perm and path changes will be saved into DB
     configuration.set(ServiceConstants.ServerConfig.PROCESSOR_FACTORIES, "org.apache.sentry.hdfs.SentryHDFSServiceProcessorFactory");
@@ -138,6 +142,195 @@ public class TestHMSFollower {
     hmsFollower.run();
     verify(sentryStore, times(0)).persistFullPathsImage(Mockito.anyMap(), Mockito.anyLong());
     verify(sentryStore, times(0)).persistLastProcessedNotificationID(Mockito.anyLong());
+  }
+
+  @Test
+  public void testPersistAFullSnapshotWhenFullSnapshotTrigger() throws Exception {
+    /*
+     * TEST CASE
+     *
+     * Simulates (by using mocks) the following:
+     *
+     * HMS client always returns the paths image with the eventId == 1.
+     *
+     * On the 1st run:  Sentry has not processed any notifications, so this
+     * should trigger a new full HMS snapshot request with the eventId = 1
+     *
+     * On the 2nd run: Sentry store returns the latest eventId == 1,
+     * which matches the eventId returned by HMS client. Because of the match,
+     * no full update is triggered.
+     *
+     * On the 3d run: before the run, full update flag in HMSFollower is set via
+     * publish-subscribe mechanism.
+     * Sentry store still returns the latest eventId == 1,
+     * which matches the eventId returned by HMS client. Because of the match,
+     * no full update should be triggered. However, because of the trigger set,
+     * a new full HMS snapshot will be triggered.
+     *
+     * On the 4th run: Sentry store returns the latest eventId == 1,
+     * which matches the eventId returned by HMS client. Because of the match,
+     * no full update is triggered. This is to check that forced trigger set
+     * for run 3 only works once.
+     *
+     */
+
+    final long SENTRY_PROCESSED_EVENT_ID = SentryStore.EMPTY_NOTIFICATION_ID;
+    final long HMS_PROCESSED_EVENT_ID = 1L;
+
+    // Mock that returns a full snapshot
+    Map<String, Collection<String>> snapshotObjects = new HashMap<>();
+    snapshotObjects.put("db", Sets.newHashSet("/db"));
+    snapshotObjects.put("db.table", Sets.newHashSet("/db/table"));
+    PathsImage fullSnapshot = new PathsImage(snapshotObjects, HMS_PROCESSED_EVENT_ID, 1);
+
+    // Mock that returns the current HMS notification ID
+    when(hmsClientMock.getCurrentNotificationEventId())
+        .thenReturn(new CurrentNotificationEventId(fullSnapshot.getId()));
+
+    SentryHMSClient sentryHmsClient = Mockito.mock(SentryHMSClient.class);
+    when(sentryHmsClient.getFullSnapshot()).thenReturn(fullSnapshot);
+
+    HMSFollower hmsFollower = new HMSFollower(configuration, sentryStore, null,
+        hmsConnectionMock, hiveInstance);
+    hmsFollower.setSentryHmsClient(sentryHmsClient);
+
+    // 1st run should get a full snapshot because AuthzPathsMapping is empty
+    when(sentryStore.getLastProcessedNotificationID()).thenReturn(SENTRY_PROCESSED_EVENT_ID);
+    when(sentryStore.isAuthzPathsMappingEmpty()).thenReturn(true);
+    when(sentryStore.isHmsNotificationEmpty()).thenReturn(true);
+    hmsFollower.run();
+    verify(sentryStore, times(1)).persistFullPathsImage(
+        fullSnapshot.getPathImage(), fullSnapshot.getId());
+    // Saving notificationID is in the same transaction of saving full snapshot
+    verify(sentryStore, times(0)).persistLastProcessedNotificationID(fullSnapshot.getId());
+
+    reset(sentryStore);
+
+    // 2nd run should not get a snapshot because is already processed
+    when(sentryStore.getLastProcessedNotificationID()).thenReturn(fullSnapshot.getId());
+    when(sentryStore.isAuthzPathsMappingEmpty()).thenReturn(false);
+    hmsFollower.run();
+    verify(sentryStore, times(0)).persistFullPathsImage(Mockito.anyMap(), Mockito.anyLong());
+    verify(sentryStore, times(0)).persistLastProcessedNotificationID(Mockito.anyLong());
+
+    reset(sentryStore);
+
+    // 3d run should not get a snapshot because is already processed,
+    // but because of full update trigger it will, as in the first run
+    PubSub.getInstance().publish(PubSub.Topic.HDFS_SYNC_HMS, "message");
+
+    when(sentryStore.getLastProcessedNotificationID()).thenReturn(fullSnapshot.getId());
+    when(sentryStore.isAuthzPathsMappingEmpty()).thenReturn(false);
+    hmsFollower.run();
+    verify(sentryStore, times(1)).persistFullPathsImage(
+        fullSnapshot.getPathImage(), fullSnapshot.getId());
+    verify(sentryStore, times(0)).persistLastProcessedNotificationID(fullSnapshot.getId());
+
+    reset(sentryStore);
+
+    // 4th run should not get a snapshot because is already processed and publish-subscribe
+    // trigger is only supposed to work once. This is exactly as 2nd run.
+    when(sentryStore.getLastProcessedNotificationID()).thenReturn(fullSnapshot.getId());
+    when(sentryStore.isAuthzPathsMappingEmpty()).thenReturn(false);
+    hmsFollower.run();
+    verify(sentryStore, times(0)).persistFullPathsImage(Mockito.anyMap(), Mockito.anyLong());
+    verify(sentryStore, times(0)).persistLastProcessedNotificationID(Mockito.anyLong());
+
+  }
+
+  @Test
+  public void testPersistAFullSnapshotWhenAuthzsnapshotIsEmptyAndHDFSSyncIsEnabled() throws Exception {
+    /*
+     * TEST CASE
+     *
+     * Simulates (by using mocks) the following:
+     *
+     * Disable HDFSSync before triggering a full snapshot
+     *
+     * HMS client always returns the paths image with the eventId == 1.
+     *
+     * On the 1st run:  Sentry notification table is empty, so this
+     * should trigger a new full HMS snapshot request with the eventId = 1
+     * but it should not persist it, in stead only set last
+     * last processed notification Id. This will prevent a
+     * unless until notifications are out of sync or hdfs sync is enabled
+     *
+     * On the 2nd run: Just enable hdfs sync and a full snapshot should be triggered
+     * because MAuthzPathsSnapshotId table is empty
+     *
+     */
+
+    configuration.set(ServiceConstants.ServerConfig.PROCESSOR_FACTORIES, "");
+    configuration.set(ServiceConstants.ServerConfig.SENTRY_POLICY_STORE_PLUGINS, "");
+
+    final long SENTRY_PROCESSED_EVENT_ID = SentryStore.EMPTY_NOTIFICATION_ID;
+    final long HMS_PROCESSED_EVENT_ID = 1L;
+
+    // Mock that returns a full snapshot
+    Map<String, Collection<String>> snapshotObjects = new HashMap<>();
+    snapshotObjects.put("db", Sets.newHashSet("/db"));
+    snapshotObjects.put("db.table", Sets.newHashSet("/db/table"));
+    PathsImage fullSnapshot = new PathsImage(snapshotObjects, HMS_PROCESSED_EVENT_ID, 1);
+
+    SentryHMSClient sentryHmsClient = Mockito.mock(SentryHMSClient.class);
+    when(sentryHmsClient.getFullSnapshot()).thenReturn(fullSnapshot);
+
+    HMSFollower hmsFollower = new HMSFollower(configuration, sentryStore, null,
+        hmsConnectionMock, hiveInstance);
+    hmsFollower.setSentryHmsClient(sentryHmsClient);
+
+    // 1st run should get a full snapshot because hms notificaions is empty
+    // but it should never be persisted because HDFS sync is disabled
+    when(sentryStore.getLastProcessedNotificationID()).thenReturn(SENTRY_PROCESSED_EVENT_ID);
+    when(sentryStore.isHmsNotificationEmpty()).thenReturn(true);
+    hmsFollower.run();
+    verify(sentryStore, times(0)).persistFullPathsImage(
+        fullSnapshot.getPathImage(), fullSnapshot.getId());
+    // Since hdfs sync is disabled we would set last processed notifications
+    // and since we did trigger createFullSnapshot() method we won't process any notifications
+    verify(sentryStore, times(1)).setLastProcessedNotificationID(fullSnapshot.getId());
+    verify(sentryStore, times(0)).persistLastProcessedNotificationID(fullSnapshot.getId());
+
+    reset(sentryStore);
+
+    //Re-enable HDFS Sync and simply start the HMS follower thread, full snap shot
+    // should be triggered because MAuthzPathsSnapshotId table is empty
+    configuration.set(ServiceConstants.ServerConfig.PROCESSOR_FACTORIES, "org.apache.sentry.hdfs.SentryHDFSServiceProcessorFactory");
+    configuration.set(ServiceConstants.ServerConfig.SENTRY_POLICY_STORE_PLUGINS, "org.apache.sentry.hdfs.SentryPlugin");
+
+    //Create a new hmsFollower instance since configuration is changing
+    hmsFollower = new HMSFollower(configuration, sentryStore, null,
+        hmsConnectionMock, hiveInstance);
+    hmsFollower.setSentryHmsClient(sentryHmsClient);
+
+
+    //Set last processed notification Id to match the full new value 1L
+    final long LATEST_EVENT_ID = 1L;
+    when(sentryStore.getLastProcessedNotificationID()).thenReturn(LATEST_EVENT_ID);
+    //Mock that sets isHmsNotificationEmpty to false
+    when(sentryStore.isHmsNotificationEmpty()).thenReturn(false);
+    // Mock that sets the current HMS notification ID. Set it to match
+    // last processed notification Id so that doesn't trigger a full snapshot
+    when(hmsClientMock.getCurrentNotificationEventId())
+        .thenReturn(new CurrentNotificationEventId(LATEST_EVENT_ID));
+    //Mock that sets getting next notification eve
+    when(hmsClientMock.getNextNotification(Mockito.eq(HMS_PROCESSED_EVENT_ID - 1), Mockito.eq(Integer.MAX_VALUE),
+        (NotificationFilter) Mockito.notNull()))
+        .thenReturn(new NotificationEventResponse(
+            Arrays.<NotificationEvent>asList(
+                new NotificationEvent(LATEST_EVENT_ID, 0, "", "")
+            )
+        ));
+    //Mock that sets isAuthzPathsSnapshotEmpty to true so trigger this particular test
+    when(sentryStore.isAuthzPathsSnapshotEmpty()).thenReturn(true);
+
+    hmsFollower.run();
+    verify(sentryStore, times(1)).persistFullPathsImage(
+        fullSnapshot.getPathImage(), fullSnapshot.getId());
+    verify(sentryStore, times(0)).setLastProcessedNotificationID(fullSnapshot.getId());
+    verify(sentryStore, times(0)).persistLastProcessedNotificationID(fullSnapshot.getId());
+
+    reset(sentryStore);
   }
 
   @Test
@@ -322,7 +515,7 @@ public class TestHMSFollower {
 
     // Create notification events
     NotificationEvent notificationEvent = new NotificationEvent(1, 0,
-        HCatEventMessage.EventType.CREATE_DATABASE.toString(),
+        EventMessage.EventType.CREATE_DATABASE.toString(),
         messageFactory.buildCreateDatabaseMessage(new Database(dbName, null, "hdfs:///db1", null))
             .toString());
     List<NotificationEvent> events = new ArrayList<>();
@@ -351,7 +544,7 @@ public class TestHMSFollower {
 
     // Create notification events
     NotificationEvent notificationEvent = new NotificationEvent(1, 0,
-        HCatEventMessage.EventType.DROP_DATABASE.toString(),
+        EventMessage.EventType.DROP_DATABASE.toString(),
         messageFactory.buildDropDatabaseMessage(new Database(dbName, null, "hdfs:///db1", null))
             .toString());
     List<NotificationEvent> events = new ArrayList<>();
@@ -384,10 +577,10 @@ public class TestHMSFollower {
     StorageDescriptor sd = new StorageDescriptor();
     sd.setLocation("hdfs:///db1.db/table1");
     NotificationEvent notificationEvent = new NotificationEvent(1, 0,
-        HCatEventMessage.EventType.CREATE_TABLE.toString(),
+        EventMessage.EventType.CREATE_TABLE.toString(),
         messageFactory.buildCreateTableMessage(
-            new Table(tableName, dbName, null, 0, 0, 0, sd, null, null, null, null, null))
-            .toString());
+            new Table(tableName, dbName, null, 0, 0, 0, sd, null, null, null, null, null),
+            Collections.emptyIterator()).toString());
     List<NotificationEvent> events = new ArrayList<>();
     events.add(notificationEvent);
 
@@ -419,7 +612,7 @@ public class TestHMSFollower {
     StorageDescriptor sd = new StorageDescriptor();
     sd.setLocation("hdfs:///db1.db/table1");
     NotificationEvent notificationEvent = new NotificationEvent(1, 0,
-        HCatEventMessage.EventType.DROP_TABLE.toString(),
+        EventMessage.EventType.DROP_TABLE.toString(),
         messageFactory.buildDropTableMessage(
             new Table(tableName, dbName, null, 0, 0, 0, sd, null, null, null, null, null))
             .toString());
@@ -457,7 +650,7 @@ public class TestHMSFollower {
     StorageDescriptor sd = new StorageDescriptor();
     sd.setLocation("hdfs:///db1.db/table1");
     NotificationEvent notificationEvent = new NotificationEvent(1, 0,
-        HCatEventMessage.EventType.ALTER_TABLE.toString(),
+        EventMessage.EventType.ALTER_TABLE.toString(),
         messageFactory.buildAlterTableMessage(
             new Table(tableName, dbName, null, 0, 0, 0, sd, null, null, null, null, null),
             new Table(newTableName, newDbName, null, 0, 0, 0, sd, null, null, null, null, null))
@@ -521,8 +714,8 @@ public class TestHMSFollower {
     Table table = new Table(tableName1, dbName, null, 0, 0, 0, sd, partCols, null, null, null,
         null);
     notificationEvent = new NotificationEvent(inputEventId, 0,
-        HCatEventMessage.EventType.CREATE_TABLE.toString(),
-        messageFactory.buildCreateTableMessage(table).toString());
+        EventMessage.EventType.CREATE_TABLE.toString(),
+        messageFactory.buildCreateTableMessage(table, Collections.emptyIterator()).toString());
     notificationEvent.setDbName(dbName);
     notificationEvent.setTableName(tableName1);
     events.add(notificationEvent);
@@ -546,7 +739,7 @@ public class TestHMSFollower {
         0, 0, sd, null);
     partitions.add(partition);
     notificationEvent = new NotificationEvent(inputEventId, 0, EventType.ADD_PARTITION.toString(),
-       messageFactory.buildAddPartitionMessage(table, partitions).toString());
+       messageFactory.buildAddPartitionMessage(table, partitions.iterator(), Collections.emptyIterator()).toString());
     notificationEvent.setDbName(dbName);
     notificationEvent.setTableName(tableName1);
     events.add(notificationEvent);
@@ -607,8 +800,8 @@ public class TestHMSFollower {
     Table table1 = new Table(tableName2, dbName, null, 0, 0, 0, sd, partCols, null, null, null,
         null);
     notificationEvent = new NotificationEvent(inputEventId, 0,
-        HCatEventMessage.EventType.CREATE_TABLE.toString(),
-        messageFactory.buildCreateTableMessage(table1).toString());
+        EventMessage.EventType.CREATE_TABLE.toString(),
+        messageFactory.buildCreateTableMessage(table1, Collections.emptyIterator()).toString());
     notificationEvent.setDbName(dbName);
     notificationEvent.setTableName(tableName2);
     events.add(notificationEvent);
@@ -661,8 +854,8 @@ public class TestHMSFollower {
     Table table = new Table(tableName1, dbName, null, 0, 0, 0, sd, partCols, null, null, null,
         null);
     notificationEvent = new NotificationEvent(inputEventId, 0,
-        HCatEventMessage.EventType.CREATE_TABLE.toString(),
-        messageFactory.buildCreateTableMessage(table).toString());
+        EventMessage.EventType.CREATE_TABLE.toString(),
+        messageFactory.buildCreateTableMessage(table, Collections.emptyIterator()).toString());
     notificationEvent.setDbName(dbName);
     notificationEvent.setTableName(tableName1);
     events.add(notificationEvent);
@@ -682,7 +875,7 @@ public class TestHMSFollower {
     // This notification should not be processed by sentry server
     // Notification should be persisted explicitly
     notificationEvent = new NotificationEvent(1, 0,
-        HCatEventMessage.EventType.ALTER_TABLE.toString(),
+        EventMessage.EventType.ALTER_TABLE.toString(),
         messageFactory.buildAlterTableMessage(
             new Table(tableName1, dbName, null, 0, 0, 0, sd, null, null, null, null, null),
             new Table(tableName1, dbName, null, 0, 0, 0, sd, null, null, null, null, null))
@@ -714,8 +907,8 @@ public class TestHMSFollower {
     Table table1 = new Table(tableName2, dbName, null, 0, 0, 0, sd, partCols, null, null, null,
         null);
     notificationEvent = new NotificationEvent(inputEventId, 0,
-        HCatEventMessage.EventType.CREATE_TABLE.toString(),
-        messageFactory.buildCreateTableMessage(table1).toString());
+        EventMessage.EventType.CREATE_TABLE.toString(),
+        messageFactory.buildCreateTableMessage(table1, Collections.emptyIterator()).toString());
     notificationEvent.setDbName(dbName);
     notificationEvent.setTableName(tableName2);
     events.add(notificationEvent);
@@ -753,20 +946,20 @@ public class TestHMSFollower {
     StorageDescriptor invalidSd = new StorageDescriptor();
     invalidSd.setLocation(null);
     NotificationEvent invalidNotificationEvent = new NotificationEvent(inputEventId, 0,
-        HCatEventMessage.EventType.CREATE_TABLE.toString(),
+        EventMessage.EventType.CREATE_TABLE.toString(),
         messageFactory.buildCreateTableMessage(
-            new Table(tableName, dbName, null, 0, 0, 0, invalidSd, null, null, null, null, null))
-            .toString());
+            new Table(tableName, dbName, null, 0, 0, 0, invalidSd, null, null, null, null, null),
+            Collections.emptyIterator()).toString());
 
     // Create valid notification event
     StorageDescriptor sd = new StorageDescriptor();
     sd.setLocation("hdfs://db1.db/table1");
     inputEventId += 1;
     NotificationEvent notificationEvent = new NotificationEvent(inputEventId, 0,
-        HCatEventMessage.EventType.CREATE_TABLE.toString(),
+        EventMessage.EventType.CREATE_TABLE.toString(),
         messageFactory.buildCreateTableMessage(
-            new Table(tableName, dbName, null, 0, 0, 0, sd, null, null, null, null, null))
-            .toString());
+            new Table(tableName, dbName, null, 0, 0, 0, sd, null, null, null, null, null),
+            Collections.emptyIterator()).toString());
     List<NotificationEvent> events = new ArrayList<>();
     events.add(invalidNotificationEvent);
     events.add(notificationEvent);
@@ -821,7 +1014,7 @@ public class TestHMSFollower {
     when(sentryStore.isHmsNotificationEmpty()).thenReturn(true);
     hmsFollower.run();
     verify(sentryStore, times(0)).persistFullPathsImage(fullSnapshot.getPathImage(), fullSnapshot.getId());
-    verify(sentryStore, times(1)).persistLastProcessedNotificationID(fullSnapshot.getId());
+    verify(sentryStore, times(1)).setLastProcessedNotificationID(fullSnapshot.getId());
     verify(sentryStore, times(1)).isHmsNotificationEmpty();
     verify(sentryStore, times(0)).isAuthzPathsMappingEmpty();
   }
@@ -837,7 +1030,7 @@ public class TestHMSFollower {
     StorageDescriptor sd = new StorageDescriptor();
     sd.setLocation("hdfs:///db1.db/table1");
     NotificationEvent notificationEvent = new NotificationEvent(1, 0,
-        HCatEventMessage.EventType.ALTER_TABLE.toString(),
+        EventMessage.EventType.ALTER_TABLE.toString(),
         messageFactory.buildAlterTableMessage(
             new Table(tableName, dbName, null, 0, 0, 0, sd, null, null, null, null, null),
             new Table(newTableName, newDbName, null, 0, 0, 0, sd, null, null, null, null, null))

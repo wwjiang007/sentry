@@ -43,6 +43,8 @@ import org.apache.sentry.provider.db.generic.service.thrift.TAuthorizable;
 import org.apache.sentry.provider.db.generic.service.thrift.TSentryGrantOption;
 import org.apache.sentry.provider.db.generic.service.thrift.TSentryPrivilege;
 import org.apache.sentry.provider.db.generic.service.thrift.TSentryRole;
+import org.apache.sentry.provider.db.generic.tools.GenericPrivilegeConverter;
+import org.apache.sentry.service.thrift.ServiceConstants;
 import org.apache.sentry.sqoop.conf.SqoopAuthConf.AuthzConfVars;
 import org.apache.sqoop.common.SqoopException;
 import org.apache.sqoop.model.MPrivilege;
@@ -107,6 +109,11 @@ public class SqoopAuthBinding {
     // previous Sentry.
     if ("org.apache.sentry.sqoop.binding.SqoopProviderBackend".equals(providerBackendName)) {
       providerBackendName = SentryGenericProviderBackend.class.getName();
+    }
+
+    // for convenience, set the PrivilegeConverter.
+    if (authConf.get(ServiceConstants.ClientConfig.PRIVILEGE_CONVERTER) == null) {
+      authConf.set(ServiceConstants.ClientConfig.PRIVILEGE_CONVERTER, GenericPrivilegeConverter.class.getName());
     }
 
     //Instantiate the configured providerBackend
@@ -234,9 +241,9 @@ public class SqoopAuthBinding {
       public Set<TSentryPrivilege> run(SentryGenericServiceClient client)
           throws Exception {
         if (resource == null) {
-          return client.listPrivilegesByRoleName(subject.getName(), role, COMPONENT_TYPE, sqoopServer.getName());
+          return client.listAllPrivilegesByRoleName(subject.getName(), role, COMPONENT_TYPE, sqoopServer.getName());
         } else if (resource.getType().equalsIgnoreCase(MResource.TYPE.SERVER.name())) {
-          return client.listPrivilegesByRoleName(subject.getName(), role, COMPONENT_TYPE, resource.getName());
+          return client.listAllPrivilegesByRoleName(subject.getName(), role, COMPONENT_TYPE, resource.getName());
         } else {
           return client.listPrivilegesByRoleName(subject.getName(), role, COMPONENT_TYPE, sqoopServer.getName(), toAuthorizable(resource));
         }
@@ -274,7 +281,7 @@ public class SqoopAuthBinding {
     execute(new Command<Void>() {
       @Override
       public Void run(SentryGenericServiceClient client) throws Exception {
-        client.addRoleToGroups(subject.getName(), role.getName(), COMPONENT_TYPE, Sets.newHashSet(group));
+        client.grantRoleToGroups(subject.getName(), role.getName(), COMPONENT_TYPE, Sets.newHashSet(group));
         return null;
       }
     });
@@ -284,7 +291,7 @@ public class SqoopAuthBinding {
     execute(new Command<Void>() {
       @Override
       public Void run(SentryGenericServiceClient client) throws Exception {
-        client.deleteRoleToGroups(subject.getName(), role.getName(), COMPONENT_TYPE, Sets.newHashSet(group));
+        client.revokeRoleFromGroups(subject.getName(), role.getName(), COMPONENT_TYPE, Sets.newHashSet(group));
         return null;
       }
     });

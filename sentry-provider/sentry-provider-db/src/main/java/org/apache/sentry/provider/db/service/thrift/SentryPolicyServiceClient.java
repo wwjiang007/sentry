@@ -56,7 +56,7 @@ public interface SentryPolicyServiceClient extends AutoCloseable {
   Set<TSentryPrivilege> listPrivilegesByRoleName(String requestorUserName, String roleName,
       List<? extends Authorizable> authorizable) throws SentryUserException;
 
-  Set<TSentryRole> listRoles(String requestorUserName) throws SentryUserException;
+  Set<TSentryRole> listAllRoles(String requestorUserName) throws SentryUserException;
 
   Set<TSentryRole> listUserRoles(String requestorUserName) throws SentryUserException;
 
@@ -215,4 +215,13 @@ public interface SentryPolicyServiceClient extends AutoCloseable {
   // export the sentry mapping data with map structure
   Map<String, Map<String, Set<String>>> exportPolicy(String requestorUserName, String objectPath)
       throws SentryUserException;
+
+  /**
+   * Requests the sentry server to synchronize all HMS notification events up to the specified id.
+   * The sentry server will return once it have processed the id specified..
+   *
+   * @param id Requested HMS notification ID.
+   * @return The most recent processed notification ID.
+   */
+  long syncNotifications(long id) throws SentryUserException;
 }

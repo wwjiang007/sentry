@@ -79,6 +79,26 @@ limitations under the License.
       <artifactId>slf4j-log4j12</artifactId>
     </dependency>
     <dependency>
+      <groupId>org.datanucleus</groupId>
+      <artifactId>datanucleus-core</artifactId>
+      <version>${datanucleus-core.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.datanucleus</groupId>
+      <artifactId>datanucleus-api-jdo</artifactId>
+      <version>${datanucleus-api-jdo.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.datanucleus</groupId>
+      <artifactId>datanucleus-rdbms</artifactId>
+      <version>${datanucleus-rdbms.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.datanucleus</groupId>
+      <artifactId>javax.jdo</artifactId>
+      <version>${datanucleus-jdo.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.apache.sentry</groupId>
       <artifactId>sentry-core-common</artifactId>
     </dependency>
@@ -88,7 +108,7 @@ limitations under the License.
     </dependency>
     <dependency>
       <groupId>org.apache.sentry</groupId>
-      <artifactId>sentry-core-model-search</artifactId>
+      <artifactId>sentry-core-model-solr</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.sentry</groupId>
@@ -113,6 +133,11 @@ limitations under the License.
     <dependency>
       <groupId>org.apache.sentry</groupId>
       <artifactId>sentry-binding-hive-conf</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.sentry</groupId>
+      <artifactId>sentry-binding-hive-follower</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
@@ -154,11 +179,6 @@ limitations under the License.
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.datanucleus</groupId>
-      <artifactId>javax.jdo</artifactId>
-      <version>3.2.0-m3</version>
-    </dependency>
-    <dependency>
       <groupId>com.codahale.metrics</groupId>
       <artifactId>metrics-core</artifactId>
     </dependency>
@@ -177,12 +197,12 @@ limitations under the License.
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-util</artifactId>
-      <version>${jettyVersion}</version>
+      <version>${jetty.version}</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-http</artifactId>
-      <version>${jettyVersion}</version>
+      <version>${jetty.version}</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
@@ -218,6 +238,19 @@ limitations under the License.
       <groupId>org.apache.hive</groupId>
       <artifactId>hive-metastore</artifactId>
       <version>${hive.version}</version>
+      <exclusions>
+      <!-- This dependency needs to be excluded to avoid compilation errors in the Eclipse build.
+           Without this change, the Eclipse build classpath contains this jar file ahead of
+           datanucleus javax.jdo*.jar. This error can not be reproduced with the maven build.
+           Cause of compilation error : PersistenceManager class provided as part of this version,
+           does not implement java.lang.AutoClosable interface. This breaks the usage of
+           PersistenceManager inside try-with-resources clause in Sentry TransactionManager class.
+       -->
+        <exclusion>
+          <groupId>javax.jdo</groupId>
+          <artifactId>jdo-api</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
   </dependencies>
 
@@ -284,6 +317,7 @@ limitations under the License.
       <plugin>
         <groupId>org.datanucleus</groupId>
         <artifactId>datanucleus-maven-plugin</artifactId>
+        <version>${datanucleus.maven.plugin.version}</version>
         <configuration>
           <api>JDO</api>
           <metadataIncludes>**/*.jdo</metadataIncludes>
@@ -297,6 +331,13 @@ limitations under the License.
             </goals>
           </execution>
         </executions>
+        <dependencies>
+          <dependency>
+            <groupId>org.datanucleus</groupId>
+            <artifactId>datanucleus-core</artifactId>
+            <version>${datanucleus-core.version}</version>
+          </dependency>
+        </dependencies>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -319,99 +360,6 @@ limitations under the License.
     </plugins>
   </build>
   <profiles>
-    <profile>
-      <id>hive-authz1</id>
-      <activation>
-        <activeByDefault>true</activeByDefault>
-      </activation>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.sentry</groupId>
-          <artifactId>sentry-binding-hive-follower</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>hive-authz2</id>
-      <activation>
-        <activeByDefault>false</activeByDefault>
-      </activation>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.sentry</groupId>
-          <artifactId>sentry-binding-hive-follower-v2</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>datanucleus3</id>
-      <activation>
-        <activeByDefault>true</activeByDefault>
-      </activation>
-      <properties>
-        <datanucleus-api-jdo.version>3.2.6</datanucleus-api-jdo.version>
-        <datanucleus-core.version>3.2.12</datanucleus-core.version>
-        <datanucleus-rdbms.version>3.2.12</datanucleus-rdbms.version>
-      </properties>
-      <dependencies>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-core</artifactId>
-          <version>${datanucleus-core.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-api-jdo</artifactId>
-          <version>${datanucleus-api-jdo.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-rdbms</artifactId>
-          <version>${datanucleus-rdbms.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>javax.jdo</artifactId>
-          <version>3.2.0-m3</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>datanucleus4</id>
-      <activation>
-        <activeByDefault>false</activeByDefault>
-      </activation>
-      <properties>
-        <datanucleus-api-jdo.version>4.2.1</datanucleus-api-jdo.version>
-        <datanucleus-core.version>4.1.6</datanucleus-core.version>
-        <datanucleus-rdbms.version>4.1.7</datanucleus-rdbms.version>
-        <datanucleus-jdo.version>3.2.0-m3</datanucleus-jdo.version>
-      </properties>
-      <dependencies>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-core</artifactId>
-          <version>${datanucleus-core.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-api-jdo</artifactId>
-          <version>${datanucleus-api-jdo.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-rdbms</artifactId>
-          <version>${datanucleus-rdbms.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>javax.jdo</artifactId>
-          <version>3.2.0-m3</version>
-        </dependency>
-      </dependencies>
-    </profile>
     <profile>
       <id>thriftif</id>
       <build>

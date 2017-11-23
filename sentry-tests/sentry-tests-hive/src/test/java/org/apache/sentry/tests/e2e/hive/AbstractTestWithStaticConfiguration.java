@@ -34,6 +34,8 @@ import java.util.Map;
 import java.util.HashSet;
 
 import com.google.common.collect.Sets;
+import org.apache.hive.hcatalog.listener.DbNotificationListener;
+import org.apache.sentry.binding.metastore.messaging.json.SentryJSONMessageFactory;
 import org.apache.sentry.tests.e2e.hive.fs.TestFSContants;
 import org.fest.reflect.core.Reflection;
 import org.junit.After;
@@ -51,8 +53,6 @@ import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.sentry.binding.hive.SentryHiveAuthorizationTaskFactoryImpl;
-import org.apache.sentry.binding.metastore.SentryMetastorePostEventListenerNotificationLog;
-import org.apache.sentry.binding.metastore.SentryMetastorePostEventListener;
 import org.apache.sentry.core.model.db.DBModelAction;
 import org.apache.sentry.core.model.db.DBModelAuthorizable;
 import org.apache.sentry.core.model.db.DBModelAuthorizables;
@@ -128,13 +128,11 @@ public abstract class AbstractTestWithStaticConfiguration extends RulesForE2ETes
   protected static final String SERVER_HOST = "localhost";
   private static final String EXTERNAL_SENTRY_SERVICE = "sentry.e2etest.external.sentry";
   protected static final String EXTERNAL_HIVE_LIB = "sentry.e2etest.hive.lib";
-  private static final String ENABLE_NOTIFICATION_LOG = "sentry.e2etest.enable.notification.log";
 
   protected static boolean policyOnHdfs = false;
   protected static boolean defaultFSOnHdfs = false;
   protected static boolean useSentryService = false;
   protected static boolean setMetastoreListener = true;
-  protected static boolean useDbNotificationListener = false;
   protected static String testServerType = null;
   protected static boolean enableHiveConcurrency = false;
   // indicate if the database need to be clear for every test case in one test class
@@ -152,7 +150,7 @@ public abstract class AbstractTestWithStaticConfiguration extends RulesForE2ETes
   protected static Map<String, String> properties;
   protected static SentrySrv sentryServer;
   protected static Configuration sentryConf;
-  protected static boolean enableNotificationLog = false;
+  protected static boolean enableNotificationLog = true;
   protected static Context context;
   protected final String semanticException = "SemanticException No valid privileges";
 
@@ -280,10 +278,6 @@ public abstract class AbstractTestWithStaticConfiguration extends RulesForE2ETes
       policyURI += "/" + HiveServerFactory.AUTHZ_PROVIDER_FILENAME;
     } else {
       policyURI = policyFileLocation.getPath();
-    }
-
-    if ("true".equalsIgnoreCase(System.getProperty(ENABLE_NOTIFICATION_LOG, "false"))) {
-      enableNotificationLog = true;
     }
 
     if (enableHiveConcurrency) {
@@ -462,6 +456,7 @@ public abstract class AbstractTestWithStaticConfiguration extends RulesForE2ETes
     hiveConf.set("hive.metastore.authorization.storage.checks", "true");
     hiveConf.set("hive.metastore.uris", "thrift://localhost:" + hmsPort);
     hiveConf.set("sentry.metastore.service.users", "hive");// queries made by hive user (beeline) skip meta store check
+    hiveConf.set("datanucleus.schema.autoCreateTables", "true");
 
     File confDir = assertCreateDir(new File(baseDir, "etc"));
     File hiveSite = new File(confDir, "hive-site.xml");
@@ -520,20 +515,10 @@ public abstract class AbstractTestWithStaticConfiguration extends RulesForE2ETes
     startSentryService();
     if (setMetastoreListener) {
       LOGGER.info("setMetastoreListener is enabled");
-      if (useDbNotificationListener) {
-        properties.put(HiveConf.ConfVars.METASTORE_EVENT_LISTENERS.varname,
-                "org.apache.hive.hcatalog.listener.DbNotificationListener");
-      } else {
-        if (enableNotificationLog) {
-          properties.put(HiveConf.ConfVars.METASTORE_EVENT_LISTENERS.varname,
-              SentryMetastorePostEventListenerNotificationLog.class.getName());
-        } else {
-          properties.put(HiveConf.ConfVars.METASTORE_EVENT_LISTENERS.varname,
-              SentryMetastorePostEventListener.class.getName());
-        }
-        properties.put("hcatalog.message.factory.impl.json",
-            "org.apache.sentry.binding.metastore.messaging.json.SentryJSONMessageFactory");
-      }
+      properties.put(HiveConf.ConfVars.METASTORE_TRANSACTIONAL_EVENT_LISTENERS.varname,
+          DbNotificationListener.class.getName());
+      properties.put(ConfVars.METASTORE_EVENT_MESSAGE_FACTORY.varname,
+          SentryJSONMessageFactory.class.getName());
     }
   }
 

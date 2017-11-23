@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.sentry.binding.hive.authz.SentryHiveAuthorizerFactory;
 import org.apache.sentry.binding.hive.conf.HiveAuthzConf;
 import org.apache.sentry.binding.hive.conf.HiveAuthzConf.AuthzConfVars;
 import org.apache.sentry.provider.file.LocalGroupResourceAuthorizationProvider;
@@ -129,8 +130,9 @@ public class HiveServerFactory {
     }
     if(!properties.containsKey(METASTORE_CONNECTION_URL)) {
       properties.put(METASTORE_CONNECTION_URL,
-          String.format("jdbc:derby:;databaseName=%s;create=true",
+          String.format("jdbc:derby:;databaseName=%s;create=true;createDatabaseIfNotExist=true",
               new File(baseDir, "metastore").getPath()));
+      properties.put("datanucleus.schema.autoCreateTables", "true");
     }
     if(!properties.containsKey(ACCESS_TESTING_MODE)) {
       properties.put(ACCESS_TESTING_MODE, "true");
@@ -180,11 +182,39 @@ public class HiveServerFactory {
       properties.put(ConfVars.METASTORESERVERMINTHREADS.varname, "5");
     }
 
-    // set the SentryMetaStoreFilterHook for HiveServer2 only, not for metastore
-    if (!HiveServer2Type.InternalMetastore.equals(type)) {
-      properties.put(ConfVars.METASTORE_FILTER_HOOK.varname,
-          org.apache.sentry.binding.metastore.SentryMetaStoreFilterHook.class.getName());
-    }
+    properties.put(ConfVars.HIVE_AUTHORIZATION_ENABLED.varname, "true");
+    properties.put(ConfVars.HIVE_AUTHORIZATION_MANAGER.varname, SentryHiveAuthorizerFactory.class.getName());
+
+    // CBO has a bug on Hive 2.0.0 with VIEWS because ReadIdentity objects are sent without
+    // parent information for partitioned columns
+    properties.put(ConfVars.HIVE_CBO_ENABLED.varname, "false");
+
+    // Hive 2.x set the following configuration to TRUE by default and it causes test issues on
+    // Sentry because we're trying to change columns with different column types
+    properties.put(ConfVars.METASTORE_DISALLOW_INCOMPATIBLE_COL_TYPE_CHANGES.varname, "false");
+
+    // This configuration will avoid starting the HS2 WebUI that was causing test failures when
+    // HS2 is configured for concurrency
+    properties.put(ConfVars.HIVE_IN_TEST.varname, "true");
+
+    // This configuration is used by SentryHiveAuthorizerFactory to change the client type
+    // to HIVESERVER2 if we're using the authorization V2 in test mode.
+    properties.put(ConfVars.HIVE_TEST_AUTHORIZATION_SQLSTD_HS2_MODE.varname, "true");
+
+    // Sets the hadoop temporary directory specified by the java.io.tmpdir (already set to the
+    // maven build directory to avoid writing to the /tmp directly
+    String hadoopTempDir = System.getProperty("java.io.tmpdir") + File.separator + "hadoop-tmp";
+    properties.put("hadoop.tmp.dir", hadoopTempDir);
+
+    // This configuration will avoid that the HMS fails if the metastore schema has not version
+    // information. For some reason, HMS does not set a version initially on our tests.
+    properties.put(ConfVars.METASTORE_SCHEMA_VERIFICATION.varname, "false");
+
+    // Disable join cartesian checks to allow Sentry tests to pass
+    properties.put(ConfVars.HIVE_STRICT_CHECKS_CARTESIAN.varname, "false");
+
+    // Disable capability checks (these checks do not work when Hive is in testing mode)
+    properties.put(ConfVars.METASTORE_CAPABILITY_CHECK.varname, "false");
 
     if (!properties.containsKey(METASTORE_BYPASS)) {
       properties.put(METASTORE_BYPASS, "hive,impala," + System.getProperty("user.name", ""));

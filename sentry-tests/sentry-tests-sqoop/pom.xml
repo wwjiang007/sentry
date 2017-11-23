@@ -42,6 +42,12 @@ limitations under the License.
     <dependency>
       <groupId>org.apache.sqoop</groupId>
       <artifactId>test</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>org.testng</groupId>
+          <artifactId>testng</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
@@ -66,12 +72,12 @@ limitations under the License.
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-servlet</artifactId>
-      <version>8.1.10.v20130312</version>
+      <version>${jetty.version}</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-server</artifactId>
-       <version>8.1.10.v20130312</version>
+       <version>${jetty.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.sentry</groupId>
@@ -95,119 +101,36 @@ limitations under the License.
       <groupId>com.google.guava</groupId>
       <artifactId>guava</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.datanucleus</groupId>
+      <artifactId>datanucleus-core</artifactId>
+      <version>${datanucleus-core.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.datanucleus</groupId>
+      <artifactId>datanucleus-api-jdo</artifactId>
+      <version>${datanucleus-api-jdo.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.datanucleus</groupId>
+      <artifactId>datanucleus-rdbms</artifactId>
+      <version>${datanucleus-rdbms.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.datanucleus</groupId>
+      <artifactId>javax.jdo</artifactId>
+      <version>${datanucleus-jdo.version}</version>
+    </dependency>
   </dependencies>
-  <profiles>
-    <profile>
-      <id>datanucleus3</id>
-      <activation>
-        <activeByDefault>true</activeByDefault>
-      </activation>
-      <properties>
-        <datanucleus-api-jdo.version>3.2.6</datanucleus-api-jdo.version>
-        <datanucleus-core.version>3.2.12</datanucleus-core.version>
-        <datanucleus-rdbms.version>3.2.12</datanucleus-rdbms.version>
-      </properties>
-      <dependencies>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-core</artifactId>
-          <version>${datanucleus-core.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-api-jdo</artifactId>
-          <version>${datanucleus-api-jdo.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-rdbms</artifactId>
-          <version>${datanucleus-rdbms.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>datanucleus4</id>
-      <activation>
-        <activeByDefault>false</activeByDefault>
-      </activation>
-      <properties>
-        <datanucleus-api-jdo.version>4.2.1</datanucleus-api-jdo.version>
-        <datanucleus-core.version>4.1.6</datanucleus-core.version>
-        <datanucleus-rdbms.version>4.1.7</datanucleus-rdbms.version>
-        <datanucleus-jdo.version>3.2.0-m3</datanucleus-jdo.version>
-      </properties>
-      <dependencies>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-core</artifactId>
-          <version>${datanucleus-core.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-api-jdo</artifactId>
-          <version>${datanucleus-api-jdo.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>datanucleus-rdbms</artifactId>
-          <version>${datanucleus-rdbms.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.datanucleus</groupId>
-          <artifactId>javax.jdo</artifactId>
-          <version>${datanucleus-jdo.version}</version>
-        </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>download-sqoop2</id>
-      <activation>
-        <activeByDefault>true</activeByDefault>
-        <property>
-          <name>!skipTests</name>
-        </property>
-      </activation>
-      <build>
-        <plugins>
-          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-dependency-plugin</artifactId>
-            <executions>
-              <execution>
-                <id>download-deps</id>
-                <phase>generate-resources</phase>
-                <goals>
-                  <goal>copy</goal>
-                </goals>
-                <configuration>
-                  <artifactItems>
-                    <artifactItem>
-                      <groupId>org.apache.tomcat</groupId>
-                      <artifactId>tomcat</artifactId>
-                      <version>7.0.81</version>
-                      <type>zip</type>
-                      <overWrite>true</overWrite>
-                      <outputDirectory>target/thirdparty</outputDirectory>
-                    </artifactItem>
-                    <artifactItem>
-                      <groupId>org.apache.sqoop</groupId>
-                      <artifactId>sqoop-server</artifactId>
-                      <version>2.0.0-SNAPSHOT</version>
-                      <type>war</type>
-                      <overWrite>true</overWrite>
-                      <outputDirectory>target/thirdparty</outputDirectory>
-                    </artifactItem>
-                  </artifactItems>
-                  <outputAbsoluteArtifactFilename>true</outputAbsoluteArtifactFilename>
-                  <overWriteSnapshots>true</overWriteSnapshots>
-                  <overWriteIfNewer>true</overWriteIfNewer>
-                  <stripVersion>true</stripVersion>
-                </configuration>
-              </execution>
-            </executions>
-          </plugin>
-        </plugins>
-      </build>
-    </profile>
-  </profiles>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <reuseForks>false</reuseForks>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

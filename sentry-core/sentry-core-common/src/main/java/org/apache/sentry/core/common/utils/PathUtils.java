@@ -211,4 +211,17 @@ public class PathUtils {
     return uriPath.toUri().toString();
   }
 
+  /**
+   * Split path into elements.
+   * May evolve to do something smarter, e.g. path canonicalization,
+   * but for now simple split on "/" is sufficient.
+   *
+   * Remove leading, following, and consecutive slashes from path so
+   * input like "//a/b//c///" when split gives
+   * {a,b,c} instead of {"","",a,b,"",c,"","",""}
+   */
+  public static String[] splitPath(String path) {
+    path = path.replaceAll("(^/+)|(/+$)", "");
+    return path.split("/+");
+  }
 }

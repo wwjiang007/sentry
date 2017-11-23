@@ -18,6 +18,7 @@
 package org.apache.sentry.tests.e2e.kafka;
 
 import kafka.server.KafkaServerStartable;
+import org.apache.sentry.kafka.conf.KafkaAuthConf;
 
 import org.apache.curator.test.TestingServer;
 import org.slf4j.Logger;
@@ -32,6 +33,8 @@ import java.nio.file.Path;
 import java.util.Properties;
 
 public class KafkaTestServer {
+    public static final int CACHE_TTL_MS = 1;
+
     private static final Logger LOGGER = LoggerFactory.getLogger(KafkaTestServer.class);
 
     private int kafkaPort = -1;
@@ -89,6 +92,7 @@ public class KafkaTestServer {
         props.put("delete.topic.enable", false);
         props.put("controlled.shutdown.retry.backoff.ms", "100");
         props.put("port", kafkaPort);
+        props.put("offsets.topic.replication.factor", "1");
         props.put("authorizer.class.name", "org.apache.sentry.kafka.authorizer.SentryKafkaAuthorizer");
         props.put("sentry.kafka.site.url", "file://" + sentrySitePath.getAbsolutePath());
         props.put("allow.everyone.if.no.acl.found", "true");
@@ -99,7 +103,9 @@ public class KafkaTestServer {
         props.put("ssl.truststore.password", "test-ts-passwd");
         props.put("security.inter.broker.protocol", "SSL");
         props.put("ssl.client.auth", "required");
-        props.put("super.users", "User:CN=superuser;User:CN=superuser1; User:CN=Superuser2 ");
+        props.put(KafkaAuthConf.KAFKA_SUPER_USERS, "User:CN=superuser;User:CN=superuser1; User:CN=Superuser2 ");
+        props.put(KafkaAuthConf.SENTRY_KAFKA_CACHING_ENABLE_NAME, "true");
+        props.put(KafkaAuthConf.SENTRY_KAFKA_CACHING_TTL_MS_NAME, String.valueOf(CACHE_TTL_MS));
     }
 
     private void createKafkaServer() throws UnknownHostException {

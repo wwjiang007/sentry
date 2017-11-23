@@ -106,7 +106,7 @@ public class TestSentryShellHive extends SentryServiceIntegrationBase {
         SentryShellHive.main(args);
 
         // validate the result
-        Set<TSentryRole> roles = client.listRoles(requestorName);
+        Set<TSentryRole> roles = client.listAllRoles(requestorName);
         assertEquals("Incorrect number of roles", 0, roles.size());
       }
     });
@@ -154,6 +154,15 @@ public class TestSentryShellHive extends SentryServiceIntegrationBase {
         sentryShell = new SentryShellHive();
         roleNames = getShellResultWithOSRedirect(sentryShell, args, true);
         validateRoleNames(roleNames, TEST_ROLE_NAME_1);
+
+        // List the groups and roles via listGroups
+        args = new String[] { "--list_group", "-conf", confPath.getAbsolutePath()};
+        sentryShell = new SentryShellHive();
+        Set<String> groups = getShellResultWithOSRedirect(sentryShell, args, true);
+        assertEquals(3, groups.size());
+        assertTrue(groups.contains("testGroup3 = testrole1"));
+        assertTrue(groups.contains("testGroup2 = testrole1"));
+        assertTrue(groups.contains("testGroup1 = testrole2, testrole1"));
 
         // test: delete role from group with -drg
         args = new String[] { "-drg", "-r", TEST_ROLE_NAME_1, "-g", "testGroup1", "-conf",
@@ -212,9 +221,8 @@ public class TestSentryShellHive extends SentryServiceIntegrationBase {
             "server=server1->db=db1->table=tbl1->column=col2->action=insert->grantoption=true",
             "-conf", confPath.getAbsolutePath() };
         SentryShellHive.main(args);
-        // for the uri privilege, the action will be awalys *
         args = new String[] { "-gpr", "-r", TEST_ROLE_NAME_1, "-p",
-            "server=server1->uri=hdfs://path/testuri", "-conf", confPath.getAbsolutePath() };
+            "server=server1->uri=hdfs://path/testuri->action=*", "-conf", confPath.getAbsolutePath() };
         SentryShellHive.main(args);
 
         // test the list privilege with -lp
@@ -230,7 +238,6 @@ public class TestSentryShellHive extends SentryServiceIntegrationBase {
             .contains("server=server1->db=db1->table=tbl1->column=col1->action=insert"));
         assertTrue(privilegeStrs
             .contains("server=server1->db=db1->table=tbl1->column=col2->action=insert->grantoption=true"));
-        // for the uri privilege, the action will be awalys *
         assertTrue(privilegeStrs.contains("server=server1->uri=hdfs://path/testuri->action=*"));
 
         // test: revoke privilege from role with -rpr
@@ -250,7 +257,7 @@ public class TestSentryShellHive extends SentryServiceIntegrationBase {
         assertEquals("Incorrect number of privileges", 4, privileges.size());
 
         args = new String[] { "-rpr", "-r", TEST_ROLE_NAME_1, "-p",
-            "server=server1->uri=hdfs://path/testuri", "-conf", confPath.getAbsolutePath() };
+            "server=server1->uri=hdfs://path/testuri->action=*", "-conf", confPath.getAbsolutePath() };
         SentryShellHive.main(args);
         privileges = client.listAllPrivilegesByRoleName(requestorName, TEST_ROLE_NAME_1);
         assertEquals("Incorrect number of privileges", 3, privileges.size());
@@ -310,9 +317,8 @@ public class TestSentryShellHive extends SentryServiceIntegrationBase {
             "server=server1->db=db1->table=tbl1->column=col2->action=insert->grantoption=true",
             "-conf", confPath.getAbsolutePath() };
         SentryShellHive.main(args);
-        // for the uri privilege, the action will be awalys *
         args = new String[] { "--grant_privilege_role", "-r", TEST_ROLE_NAME_1, "-p",
-            "server=server1->uri=hdfs://path/testuri", "-conf", confPath.getAbsolutePath() };
+            "server=server1->uri=hdfs://path/testuri->action=*", "-conf", confPath.getAbsolutePath() };
         SentryShellHive.main(args);
 
         // test the list privilege with -lp
@@ -329,7 +335,6 @@ public class TestSentryShellHive extends SentryServiceIntegrationBase {
             .contains("server=server1->db=db1->table=tbl1->column=col1->action=insert"));
         assertTrue(privilegeStrs
             .contains("server=server1->db=db1->table=tbl1->column=col2->action=insert->grantoption=true"));
-        // for the uri privilege, the action will be awalys *
         assertTrue(privilegeStrs.contains("server=server1->uri=hdfs://path/testuri->action=*"));
 
         // test: revoke privilege from role with -rpr
@@ -349,7 +354,7 @@ public class TestSentryShellHive extends SentryServiceIntegrationBase {
         assertEquals("Incorrect number of privileges", 4, privileges.size());
 
         args = new String[] { "--revoke_privilege_role", "-r", TEST_ROLE_NAME_1, "-p",
-            "server=server1->uri=hdfs://path/testuri", "-conf", confPath.getAbsolutePath() };
+            "server=server1->uri=hdfs://path/testuri->action=*", "-conf", confPath.getAbsolutePath() };
         SentryShellHive.main(args);
         privileges = client.listAllPrivilegesByRoleName(requestorName, TEST_ROLE_NAME_1);
         assertEquals("Incorrect number of privileges", 3, privileges.size());

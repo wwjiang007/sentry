@@ -133,17 +133,20 @@ public class TestSentryStore extends org.junit.Assert {
     policyFilePath = new File(dataDir, "local_policy_file.ini");
     conf.set(ServerConfig.SENTRY_STORE_GROUP_MAPPING_RESOURCE,
         policyFilePath.getPath());
-    conf.setInt(ServerConfig.SENTRY_STORE_TRANSACTION_RETRY, 10);
 
+    // These tests do not need to retry transactions, so setting to 1 to reduce testing time
+    conf.setInt(ServerConfig.SENTRY_STORE_TRANSACTION_RETRY, 1);
 
+    // SentryStore should be initialized only once. The tables created by the test cases will
+    // be cleaned up during the @After method.
+    sentryStore = new SentryStore(conf);
+
+    boolean hdfsSyncEnabled = SentryServiceUtil.isHDFSSyncEnabled(conf);
+    sentryStore.setPersistUpdateDeltas(hdfsSyncEnabled);
   }
 
   @Before
   public void before() throws Exception {
-    boolean hdfsSyncEnabled = SentryServiceUtil.isHDFSSyncEnabled(conf);
-    sentryStore = new SentryStore(conf);
-    sentryStore.setPersistUpdateDeltas(hdfsSyncEnabled);
-
     policyFile = new PolicyFile();
     String adminUser = "g1";
     addGroupsToUser(adminUser, adminGroups);
@@ -153,9 +156,6 @@ public class TestSentryStore extends org.junit.Assert {
   @After
   public void after() {
     sentryStore.clearAllTables();
-    if (sentryStore != null) {
-      sentryStore.stop();
-    }
   }
 
   @AfterClass
@@ -163,6 +163,8 @@ public class TestSentryStore extends org.junit.Assert {
     if (dataDir != null) {
       FileUtils.deleteQuietly(dataDir);
     }
+
+    sentryStore.stop();
   }
 
   /**
@@ -3461,4 +3463,61 @@ public class TestSentryStore extends org.junit.Assert {
     }
   }
 
+  /**
+   * Test paths with multiple leading slashes
+   * @throws Exception
+   */
+  @Test
+  public void testRetrievePathImageWithMultipleLeadingSlashes() throws Exception {
+    //Test with no leading slashes
+    String prefix = "user/hive/warehouse";
+    String []prefixes = {"/" + prefix};
+    Map<String, Collection<String>> authzPaths = new HashMap<>();
+    // Makes sure that authorizable object could be associated
+    // with different paths and can be properly persisted into database.
+    String tablePath = prefix + "/loc1/db2.db/table1.1";
+    authzPaths.put("db1.table1", Sets.newHashSet(tablePath));
+    long notificationID = 1;
+    sentryStore.persistFullPathsImage(authzPaths, notificationID);
+    PathsUpdate pathsUpdate = sentryStore.retrieveFullPathsImageUpdate(prefixes);
+    assertEquals(notificationID, pathsUpdate.getImgNum());
+    TPathsUpdate tPathsUpdate = pathsUpdate.toThrift();
+    TPathsDump pathDump = tPathsUpdate.getPathsDump();
+    Map<Integer, TPathEntry> nodeMap = pathDump.getNodeMap();
+    assertEquals(7, nodeMap.size());
+
+    //Test with single leading slashes
+    prefix = "/user/hive/warehouse";
+    prefixes = new String[]{prefix};
+    authzPaths = new HashMap<>();
+    // Makes sure that authorizable object could be associated
+    // with different paths and can be properly persisted into database.
+    tablePath = prefix + "/loc1/db2.db/table1.1";
+    authzPaths.put("db1.table1", Sets.newHashSet(tablePath));
+    notificationID = 2;
+    sentryStore.persistFullPathsImage(authzPaths, notificationID);
+    pathsUpdate = sentryStore.retrieveFullPathsImageUpdate(prefixes);
+    assertEquals(notificationID, pathsUpdate.getImgNum());
+    tPathsUpdate = pathsUpdate.toThrift();
+    pathDump = tPathsUpdate.getPathsDump();
+    nodeMap = pathDump.getNodeMap();
+    assertEquals(7, nodeMap.size());
+
+    //Test with multiple leading slash
+    prefix = "///user/hive/warehouse";
+    prefixes = new String[]{prefix};
+    authzPaths = new HashMap<>();
+    // Makes sure that authorizable object could be associated
+    // with different paths and can be properly persisted into database.
+    tablePath = prefix + "/loc1/db2.db/table1.1";
+    authzPaths.put("db1.table1", Sets.newHashSet(tablePath));
+    notificationID = 3;
+    sentryStore.persistFullPathsImage(authzPaths, notificationID);
+    pathsUpdate = sentryStore.retrieveFullPathsImageUpdate(prefixes);
+    assertEquals(notificationID, pathsUpdate.getImgNum());
+    tPathsUpdate = pathsUpdate.toThrift();
+    pathDump = tPathsUpdate.getPathsDump();
+    nodeMap = pathDump.getNodeMap();
+    assertEquals(7, nodeMap.size());
+  }
 }

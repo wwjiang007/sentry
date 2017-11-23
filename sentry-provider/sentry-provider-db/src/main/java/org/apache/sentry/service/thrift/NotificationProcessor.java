@@ -25,7 +25,7 @@ import com.google.common.collect.Lists;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.metastore.api.NotificationEvent;
-import org.apache.hive.hcatalog.messaging.HCatEventMessage.EventType;
+import org.apache.hadoop.hive.metastore.messaging.EventMessage.EventType;
 import org.apache.sentry.binding.metastore.messaging.json.SentryJSONAddPartitionMessage;
 import org.apache.sentry.binding.metastore.messaging.json.SentryJSONAlterPartitionMessage;
 import org.apache.sentry.binding.metastore.messaging.json.SentryJSONAlterTableMessage;
@@ -38,6 +38,7 @@ import org.apache.sentry.binding.metastore.messaging.json.SentryJSONMessageDeser
 import org.apache.sentry.core.common.exception.SentryInvalidHMSEventException;
 import org.apache.sentry.core.common.exception.SentryInvalidInputException;
 import org.apache.sentry.core.common.exception.SentryNoSuchObjectException;
+import org.apache.sentry.core.common.utils.PathUtils;
 import org.apache.sentry.hdfs.PathsUpdate;
 import org.apache.sentry.hdfs.PermissionsUpdate;
 import org.apache.sentry.hdfs.SentryMalformedPathException;
@@ -111,7 +112,7 @@ final class NotificationProcessor {
    * @return list of components, e.g. [foo, bar]
    */
   private static List<String> splitPath(String path) {
-    return (Lists.newArrayList(path.split("/")));
+    return Lists.newArrayList(PathUtils.splitPath(path));
   }
 
   /**
@@ -520,7 +521,7 @@ final class NotificationProcessor {
     }
 
     if (oldLocation.equals(newLocation)) {
-      LOGGER.info(String.format("Alter partition notification ignored as"
+      LOGGER.debug(String.format("Alter partition notification ignored as"
           + "location has not changed: AuthzObj = %s, Location = %s", dbName + "."
           + "." + tableName, oldLocation));
       return false;

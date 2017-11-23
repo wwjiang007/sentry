@@ -68,6 +68,11 @@ public class PermissionsUpdate implements Updateable.Update {
   }
 
   @Override
+  public void setImgNum(long imgNum) {
+    throw new UnsupportedOperationException("setImgNum not used");
+  }
+
+  @Override
   public boolean hasFullImage() {
     return tPermUpdate.isHasfullImage();
   }
@@ -148,6 +153,12 @@ public class PermissionsUpdate implements Updateable.Update {
       return other.tPermUpdate == null;
     }
     return tPermUpdate.equals(other.tPermUpdate);
+  }
+
+  @Override
+  public String toString() {
+    // TPermissionsUpdate implements toString() perfectly; null tPermUpdate is ok
+    return getClass().getSimpleName() + "(" + tPermUpdate + ")";
   }
 
 }

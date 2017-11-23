@@ -18,18 +18,11 @@ package org.apache.sentry.binding.hive;
 
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
-import org.apache.hadoop.hive.ql.security.HiveAuthenticationProvider;
-import org.apache.hadoop.hive.ql.security.authorization.plugin.HiveAccessController;
-import org.apache.hadoop.hive.ql.security.authorization.plugin.HiveAuthorizationValidator;
-import org.apache.hadoop.hive.ql.security.authorization.plugin.HiveAuthorizer;
-import org.apache.hadoop.hive.ql.security.authorization.plugin.HiveAuthorizerFactory;
-import org.apache.hadoop.hive.ql.security.authorization.plugin.HiveAuthorizerImpl;
-import org.apache.hadoop.hive.ql.security.authorization.plugin.HiveAuthzPluginException;
-import org.apache.hadoop.hive.ql.security.authorization.plugin.HiveAuthzSessionContext;
-import org.apache.hadoop.hive.ql.security.authorization.plugin.HiveMetastoreClientFactory;
+import org.apache.hadoop.hive.ql.security.SessionStateUserAuthenticator;
 import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hive.service.cli.HiveSQLException;
 import org.apache.hive.service.cli.session.HiveSessionHookContext;
+import org.apache.sentry.binding.hive.authz.SentryHiveAuthorizerFactory;
 import org.apache.sentry.binding.hive.conf.HiveAuthzConf;
 import org.apache.sentry.binding.hive.authz.HiveAuthzBindingHookBase;
 import com.google.common.base.Joiner;
@@ -37,10 +30,7 @@ import com.google.common.base.Joiner;
 public class HiveAuthzBindingSessionHook
     implements org.apache.hive.service.cli.session.HiveSessionHook {
 
-  public static final String SEMANTIC_HOOK =
-    "org.apache.sentry.binding.hive.HiveAuthzBindingHook";
-  public static final String FILTER_HOOK =
-    "org.apache.sentry.binding.hive.HiveAuthzBindingHook";
+  public static final String SEMANTIC_HOOK = HiveAuthzBindingHook.class.getName();
   public static final String SCRATCH_DIR_PERMISSIONS = "700";
   public static final String ACCESS_RESTRICT_LIST = Joiner.on(",").join(
     ConfVars.SEMANTIC_ANALYZER_HOOK.varname,
@@ -52,7 +42,6 @@ public class HiveAuthzBindingSessionHook
     ConfVars.HADOOPBIN.varname,
     ConfVars.HIVESESSIONID.varname,
     ConfVars.HIVEAUXJARS.varname,
-    ConfVars.HIVESTATSDBCONNECTIONSTRING.varname,
     ConfVars.SCRATCHDIRPERMISSION.varname,
     ConfVars.HIVE_SECURITY_COMMAND_WHITELIST.varname,
     ConfVars.HIVE_AUTHORIZATION_TASK_FACTORY.varname,
@@ -64,29 +53,7 @@ public class HiveAuthzBindingSessionHook
     HiveAuthzConf.HIVE_SENTRY_SUBJECT_NAME,
     HiveAuthzConf.SENTRY_ACTIVE_ROLE_SET
     );
-
-  public static class SentryHiveAuthorizerFactory implements
-      HiveAuthorizerFactory {
-
-    @Override
-    public HiveAuthorizer createHiveAuthorizer(
-        HiveMetastoreClientFactory metastoreClientFactory, HiveConf conf,
-        HiveAuthenticationProvider hiveAuthenticator,
-        HiveAuthzSessionContext ctx) throws HiveAuthzPluginException {
-      return new SentryHiveAuthorizerImpl(null, null);    }
-  }
-
-  public static class SentryHiveAuthorizerImpl extends HiveAuthorizerImpl {
-
-    public SentryHiveAuthorizerImpl(HiveAccessController accessController,
-        HiveAuthorizationValidator authValidator) {
-      super(accessController, authValidator);
-    }
-
-    @Override
-    public void applyAuthorizationConfigPolicy(HiveConf conf) {
-    }
-  }
+  public static final String WILDCARD_ACL_VALUE = "*";
 
   /**
    * The session hook for sentry authorization that sets the required session level configuration
@@ -102,30 +69,42 @@ public class HiveAuthzBindingSessionHook
     // Add sentry hooks to the session configuration
     HiveConf sessionConf = sessionHookContext.getSessionConf();
 
+    // set semantic hooks to request authorization permissions to sentry
     appendConfVar(sessionConf, ConfVars.SEMANTIC_ANALYZER_HOOK.varname,
         SEMANTIC_HOOK);
+
+    // set security command list
     HiveAuthzConf authzConf = HiveAuthzBindingHookBase.loadAuthzConf(sessionConf);
     String commandWhitelist =
         authzConf.get(HiveAuthzConf.HIVE_SENTRY_SECURITY_COMMAND_WHITELIST,
             HiveAuthzConf.HIVE_SENTRY_SECURITY_COMMAND_WHITELIST_DEFAULT);
     sessionConf.setVar(ConfVars.HIVE_SECURITY_COMMAND_WHITELIST, commandWhitelist);
+
+    // set additional configuration properties required for auth
     sessionConf.setVar(ConfVars.SCRATCHDIRPERMISSION, SCRATCH_DIR_PERMISSIONS);
+
+    // Enable compiler to capture transform URI referred in the query
     sessionConf.setBoolVar(ConfVars.HIVE_CAPTURE_TRANSFORM_ENTITY, true);
 
     // set user name
     sessionConf.set(HiveAuthzConf.HIVE_ACCESS_SUBJECT_NAME, sessionHookContext.getSessionUser());
     sessionConf.set(HiveAuthzConf.HIVE_SENTRY_SUBJECT_NAME, sessionHookContext.getSessionUser());
-    sessionConf.setVar(ConfVars.HIVE_AUTHORIZATION_MANAGER,
-            "org.apache.sentry.binding.hive.HiveAuthzBindingSessionHook$SentryHiveAuthorizerFactory");
 
     // Set MR ACLs to session user
-    appendConfVar(sessionConf, JobContext.JOB_ACL_VIEW_JOB,
+    updateJobACL(sessionConf, JobContext.JOB_ACL_VIEW_JOB,
         sessionHookContext.getSessionUser());
-    appendConfVar(sessionConf, JobContext.JOB_ACL_MODIFY_JOB,
+    updateJobACL(sessionConf, JobContext.JOB_ACL_MODIFY_JOB,
         sessionHookContext.getSessionUser());
 
     // setup restrict list
     sessionConf.addToRestrictList(ACCESS_RESTRICT_LIST);
+
+    // enable hive authorization V2
+    sessionConf.setBoolean(HiveConf.ConfVars.HIVE_AUTHORIZATION_ENABLED.varname, true);
+    sessionConf.set(HiveConf.ConfVars.HIVE_AUTHENTICATOR_MANAGER.varname,
+        SessionStateUserAuthenticator.class.getName());
+    sessionConf.set(ConfVars.HIVE_AUTHORIZATION_MANAGER.varname,
+        SentryHiveAuthorizerFactory.class.getName());
   }
 
   // Setup given sentry hooks
@@ -138,5 +117,28 @@ public class HiveAuthzBindingSessionHook
       currentValue = sentryConfVal + "," + currentValue;
     }
     sessionConf.set(confVar, currentValue);
+  }
+
+  // Setup ACL to include the session user
+  private void updateJobACL(HiveConf sessionConf, String aclName,
+      String sessionUser) {
+    String aclString = sessionConf.get(aclName, "");
+    // An empty ACL, replace it with the user
+    if (aclString.isEmpty()) {
+      aclString = sessionUser;
+    } else {
+      // ACLs can start with a space if only groups are configured
+      if (aclString.startsWith(" ")) {
+        aclString = sessionUser + aclString;
+      } else {
+        // Do not replace the wildcard ACL, it would restrict access
+        boolean isWildcard = (aclString.contains(WILDCARD_ACL_VALUE) &&
+            aclString.trim().equals(WILDCARD_ACL_VALUE));
+        if (!isWildcard) {
+          aclString = sessionUser + "," + aclString;
+        }
+      }
+    }
+    sessionConf.set(aclName, aclString.trim());
   }
 }
