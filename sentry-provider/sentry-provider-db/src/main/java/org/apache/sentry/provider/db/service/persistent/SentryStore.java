@@ -2670,37 +2670,6 @@ public class SentryStore {
   }
 
   /**
-   * Retrieves an up-to-date hive paths snapshot. <p>
-   * It reads hiveObj to paths mapping from {@link MAuthzPathsMapping} table and
-   * gets the changeID of latest delta update, from {@link MSentryPathChange}, that
-   * the snapshot corresponds to.
-   *
-   * NOTE: this method used to be used in the actual code but is now only used for tests
-   * which should be refactored to use the new {@link #retrieveFullPathsImageUpdate} functionality.
-   *
-   * TODO: Remove retrieveFullPathsImage method and reimplement tests.
-   *
-   * @return an up-to-date hive paths snapshot contains mapping of hiveObj to &lt Paths &gt.
-   *         For empty image return {@link #EMPTY_CHANGE_ID} and a empty map.
-   * @throws Exception
-   */
-  public PathsImage retrieveFullPathsImage() throws Exception {
-    return (PathsImage) tm.executeTransaction(
-    new TransactionBlock() {
-      public Object execute(PersistenceManager pm) throws Exception {
-        // curChangeID could be 0 for the first full snapshot fetching
-        // from HMS. It does not have corresponding delta update.
-        pm.setDetachAllOnCommit(false); // No need to detach objects
-        long curChangeID = getLastProcessedChangeIDCore(pm, MSentryPathChange.class);
-        long curImageID = getCurrentAuthzPathsSnapshotID(pm);
-        Map<String, Collection<String>> pathImage = retrieveFullPathsImageCore(pm, curImageID);
-
-        return new PathsImage(pathImage, curChangeID, curImageID);
-      }
-    });
-  }
-
-  /**
    * Retrieves an up-to-date hive paths snapshot.
    * The image only contains PathsDump in it.
    * <p>
@@ -2729,36 +2698,6 @@ public class SentryStore {
                 return pathUpdate;
               }
             });
-  }
-
-  /**
-   * Retrieves an up-to-date hive paths snapshot from {@code MAuthzPathsMapping} table.
-   * The snapshot is represented by a snapshot ID, and a map from hiveObj to paths.
-   *
-   * @return a mapping of hiveObj to &lt Paths &gt.
-   */
-  private Map<String, Collection<String>> retrieveFullPathsImageCore(PersistenceManager pm,
-                                                                     long currentSnapshotID) {
-    if (currentSnapshotID <= EMPTY_PATHS_SNAPSHOT_ID) {
-      return Collections.emptyMap();
-    }
-
-    Query query = pm.newQuery(MAuthzPathsMapping.class);
-    query.setFilter("this.authzSnapshotID == currentSnapshotID");
-    query.declareParameters("long currentSnapshotID");
-    Collection<MAuthzPathsMapping> authzToPathsMappings =
-        (Collection<MAuthzPathsMapping>) query.execute(currentSnapshotID);
-
-    if (authzToPathsMappings.isEmpty()) {
-      return Collections.emptyMap();
-    }
-
-    Map<String, Collection<String>> retVal = new HashMap<>(authzToPathsMappings.size());
-    for (MAuthzPathsMapping authzToPaths : authzToPathsMappings) {
-      retVal.put(authzToPaths.getAuthzObjName(), authzToPaths.getPathStrings());
-    }
-
-    return retVal;
   }
 
   /**
@@ -2837,6 +2776,7 @@ public class SentryStore {
           long snapshotID = getCurrentAuthzPathsSnapshotID(pm);
           long nextSnapshotID = snapshotID + 1;
           pm.makePersistent(new MAuthzPathsSnapshotId(nextSnapshotID));
+          LOGGER.info("Attempting to commit new HMS snapshot with ID = {}", nextSnapshotID);
           for (Map.Entry<String, Collection<String>> authzPath : authzPaths.entrySet()) {
             pm.makePersistent(new MAuthzPathsMapping(nextSnapshotID, authzPath.getKey(), authzPath.getValue()));
           }
@@ -2909,7 +2849,7 @@ public class SentryStore {
         Collection<String> paths) {
     long currentSnapshotID = getCurrentAuthzPathsSnapshotID(pm);
     if (currentSnapshotID <= EMPTY_PATHS_SNAPSHOT_ID) {
-      LOGGER.error("AuthzObj: {} cannot be persisted if an paths snapshot ID does not exist yet.");
+      LOGGER.warn("AuthzObj: {} cannot be persisted if paths snapshot ID does not exist yet.", authzObj);
     }
 
     MAuthzPathsMapping mAuthzPathsMapping = getMAuthzPathsMappingCore(pm, currentSnapshotID, authzObj);
