@@ -78,7 +78,6 @@ import org.apache.sentry.provider.db.service.thrift.TSentryMappingData;
 import org.apache.sentry.provider.db.service.thrift.TSentryPrivilege;
 import org.apache.sentry.provider.db.service.thrift.TSentryPrivilegeMap;
 import org.apache.sentry.provider.db.service.thrift.TSentryRole;
-import org.apache.sentry.service.thrift.CounterWait;
 import org.apache.sentry.service.thrift.ServiceConstants.PrivilegeScope;
 import org.apache.sentry.service.thrift.ServiceConstants.ServerConfig;
 import org.datanucleus.store.rdbms.exceptions.MissingTableException;
@@ -575,6 +574,25 @@ public class SentryStore {
       // the method only for test, log the error and ignore the exception
       LOGGER.error(e.getMessage(), e);
     }
+  }
+
+  /**
+   * Removes all the information related to HMS Objects from sentry store.
+   */
+  @VisibleForTesting
+  public void clearHmsPathInformation() throws Exception {
+    tm.executeTransactionWithRetry(
+            new TransactionBlock<Object>() {
+              public Object execute(PersistenceManager pm) throws Exception {
+                // Data in MAuthzPathsSnapshotId.class is not cleared intentionally.
+                // This data will help sentry retain the history of snapshots taken before
+                // and help in picking appropriate ID even when hdfs sync is enabled/disabled.
+                pm.newQuery(MSentryPathChange.class).deletePersistentAll();
+                pm.newQuery(MAuthzPathsMapping.class).deletePersistentAll();
+                pm.newQuery(MPath.class).deletePersistentAll();
+                return null;
+              }
+            });
   }
 
   /**
@@ -3102,9 +3120,9 @@ public class SentryStore {
   }
 
   /**
-   * Tells if there are any records in MAuthzPathsSnapshotId
+   * Tells if there are any records in MAuthzPathsMapping
    *
-   * @return true if there are no entries in <code>MAuthzPathsSnapshotId</code>
+   * @return true if there are no entries in <code>MAuthzPathsMapping</code>
    * false if there are entries
    * @throws Exception
    */
@@ -3113,7 +3131,7 @@ public class SentryStore {
         new TransactionBlock<Boolean>() {
           public Boolean execute(PersistenceManager pm) throws Exception {
             pm.setDetachAllOnCommit(false); // No need to detach objects
-            return isTableEmptyCore(pm, MAuthzPathsSnapshotId.class);
+            return isTableEmptyCore(pm, MAuthzPathsMapping.class);
           }
         });
   }

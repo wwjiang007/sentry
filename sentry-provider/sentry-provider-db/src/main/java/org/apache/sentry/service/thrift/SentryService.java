@@ -48,6 +48,8 @@ import org.apache.hadoop.security.SaslRpcServer.AuthMethod;
 import org.apache.hadoop.security.SecurityUtil;
 import org.apache.sentry.Command;
 import org.apache.sentry.core.common.utils.SigUtils;
+import org.apache.sentry.provider.db.service.persistent.HMSFollower;
+import org.apache.sentry.provider.db.service.persistent.LeaderStatusMonitor;
 import org.apache.sentry.provider.db.service.persistent.SentryStore;
 import org.apache.sentry.provider.db.service.thrift.SentryHealthCheckServletContextListener;
 import org.apache.sentry.provider.db.service.thrift.SentryMetrics;
@@ -639,5 +641,16 @@ public class SentryService implements Callable, SigUtils.SigListener {
   public void onSignal(String signalName) {
     // Become follower
     leaderMonitor.deactivate();
+  }
+
+  /**
+   * Restart HMSFollower with new configuration
+   * @param newConf Configuration
+   * @throws Exception
+   */
+  @VisibleForTesting
+  public void restartHMSFollower(Configuration newConf) throws Exception{
+    stopHMSFollower(conf);
+    startHMSFollower(newConf);
   }
 }
